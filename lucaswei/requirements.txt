@@ -1,0 +1,18 @@
+# --- 核心算法与数据处理 ---
+numpy==2.4.3
+pandas==2.3.3
+scikit-learn==1.8.0
+scipy==1.17.1
+xgboost==3.2.0
+
+# --- UI 界面 ---
+streamlit==1.55.0
+
+# --- 绘图与可视化 ---
+matplotlib==3.10.8
+seaborn==0.13.2
+
+# --- 数据库与文件处理 ---
+SQLAlchemy==2.0.48
+xlrd==2.0.2
+joblib==1.5.3

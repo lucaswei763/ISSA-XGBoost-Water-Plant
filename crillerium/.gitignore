@@ -1,0 +1,79 @@
+# =========================
+# Confidential / sensitive data
+# =========================
+
+# Raw source data and spreadsheets
+*.xls
+*.xlsx
+*.csv
+
+# Sensitive reports / office docs / exported materials
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+
+# Model artifacts and generated outputs
+outputs/
+*.pkl
+*.joblib
+*.onnx
+*.txt
+!requirements.txt
+
+# Local dashboard / experiment temp files
+tmp_*
+catboost_info/
+
+# =========================
+# Secrets / credentials
+# =========================
+
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+secrets.*
+
+# =========================
+# Python cache / build
+# =========================
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# =========================
+# Local config / editor
+# =========================
+
+.mplconfig/
+.idea/
+.vscode/
+*.log
+Thumbs.db
+Desktop.ini
