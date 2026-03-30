@@ -1,0 +1,49 @@
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# 模型文件（可能包含训练数据信息，建议忽略）
+models/
+*.pkl
+*.joblib
+
+# 数据文件
+data/
+*.db
+*.xlsx
+*.xls
+*.csv
+
+# 打包输出
+dist/
+build/
+*.spec
+
+# 日志文件
+logs/
+*.log
+
+# 配置文件
+.env
+config_local.py
+
+# IDE 相关
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统临时文件
+Thumbs.db
+.DS_Store
+
+# 输出目录（生成的图表、报告等）
+correlation_figures/
+outputs/
