@@ -47,3 +47,5 @@ Thumbs.db
 # 输出目录（生成的图表、报告等）
 correlation_figures/
 outputs/
+Model_Evaluation_Report/
+Model_Evaluation_Report_Annual/

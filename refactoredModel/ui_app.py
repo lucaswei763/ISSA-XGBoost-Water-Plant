@@ -53,7 +53,7 @@ class WaterPredictorApp(ctk.CTk):
         fields = [
             ("日期 (YYYY-MM-DD)", "date"),
             ("原水浊度 (NTU)", "turbidity"),
-            ("进水流量 (m³/h)", "flow"),
+            ("供水量 (Km³)", "flow"),
             ("原水 pH 值", "ph"),
             ("原水温度 (°C)", "temperature")
         ]

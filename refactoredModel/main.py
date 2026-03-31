@@ -123,7 +123,7 @@ new_cols = [c for c in df_clean.columns if c not in df.columns]
 if new_cols:
     df_clean[new_cols] = df_clean[new_cols].fillna(method='ffill').fillna(0)
 
-exclude_patterns = ['日期', '年', '月', '星期']
+exclude_patterns = ['日期', '星期']
 feature_candidates = [c for c in df_clean.columns if
                       c != target_col and c != '日期' and df_clean[c].dtype in ['int64', 'float64'] and not any(
                           p in c for p in exclude_patterns)]
@@ -153,7 +153,7 @@ X = df_clean[final_features].copy()
 y = df_clean[target_col].copy()
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE, shuffle=False)
-sample_weights_train = np.linspace(0.3, 1.0, len(y_train))
+sample_weights_train = np.linspace(0.1, 1.0, len(y_train))
 
 scaler = RobustScaler()
 X_train_scaled = scaler.fit_transform(X_train)

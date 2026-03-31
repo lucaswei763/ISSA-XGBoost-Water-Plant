@@ -1,3 +1,4 @@
+
 # issa_optimizer.py
 import numpy as np
 import math
@@ -17,12 +18,12 @@ class ISSA_XGBoost:
 
         # 👑 核心修改 1：收紧树深限制，增加 reg_lambda (L2正则化) 压制过拟合
         self.bounds = bounds or [
-            (50, 300),  # pos[0]: n_estimators (减少树的数量)
-            (3, 6),  # pos[1]: max_depth (死死按在 6 以内，严禁生成深树)
-            (0.01, 0.15),  # pos[2]: learning_rate (保守的学习率)
-            (0.5, 0.8),  # pos[3]: subsample (每次只用部分数据建树)
-            (0.5, 0.8),  # pos[4]: colsample_bytree (每次只用部分特征)
-            (1.0, 10.0)  # pos[5]: reg_lambda (L2正则化惩罚项，越大曲线越平滑)
+            (50, 350),  # pos[0]: n_estimators (稍微增加树的数量上限)
+            (3, 8),  # pos[1]: max_depth (上限从 6 放宽到 8)
+            (0.01, 0.15),  # pos[2]: learning_rate
+            (0.6, 0.9),  # pos[3]: subsample (稍微提高采样率，减少随机性带来的平滑)
+            (0.6, 0.9),  # pos[4]: colsample_bytree
+            (0.1, 5.0)  # pos[5]: reg_lambda (下限从 1.0 降到 0.1，上限降到 5.0，释放拟合能力)
         ]
         self.dim = len(self.bounds)
         self.cv_splits = cv_splits
