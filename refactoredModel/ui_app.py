@@ -399,10 +399,14 @@ class WaterPredictorApp(ctk.CTk):
     def _format_metric(value, unit):
         if value in (None, "--"):
             return "--"
+
         if isinstance(value, (int, float)):
-            formatted = f"{value:.2f}".rstrip("0").rstrip(".")
+            # 这里是核心修改：使用 :g 格式化
+            # 它聪明在：18.50 会变成 18.5，100.00 会保留成 100，而不会被误删成 1
+            formatted = f"{value:g}"
         else:
             formatted = str(value)
+
         return f"{formatted} {unit}".strip()
 
     def _on_predict_click(self):
