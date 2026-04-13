@@ -470,7 +470,7 @@ class WaterPredictorApp(ctk.CTk):
                 freq_hz = (pump_flow_l * 50.0 * 100.0) / (1000.0 * stroke)
                 
                 self.result_detail_var.set(
-                    f"👉 投加泵建议频率: {freq_hz:.2f} Hz\n"
+                    f"投加泵建议频率: {freq_hz:.2f} Hz\n"
                     f"预测完成 | 时间 {datetime.datetime.now().strftime('%H:%M:%S')}"
                 )
             else:
