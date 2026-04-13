@@ -128,40 +128,58 @@ class WaterPredictorApp(ctk.CTk):
             row=1,
             column=0,
             key="turbidity",
-            title="原水浊度",
-            hint="单位: NTU",
-            placeholder="例如 21.5",
+            title="浑浊度 (NTU)",
+            hint="例如 21.5",
+            placeholder="21.5",
         )
         self._create_input_field(
             parent=form,
             row=1,
             column=1,
-            key="flow",
-            title="供水量",
-            hint="单位: Km3",
-            placeholder="例如 8.4",
+            key="raw_water",
+            title="原水流量 (Km³/h)",
+            hint="例 8.2 (日原水量/24)",
+            placeholder="8.2",
         )
         self._create_input_field(
             parent=form,
             row=2,
             column=0,
-            key="ph",
-            title="原水 pH",
-            hint="建议输入 0-14",
-            placeholder="例如 7.2",
+            key="temperature",
+            title="温度 (℃)",
+            hint="单位: °C",
+            placeholder="18.0",
         )
         self._create_input_field(
             parent=form,
             row=2,
             column=1,
-            key="temperature",
-            title="原水温度",
-            hint="单位: °C",
-            placeholder="例如 18.0",
+            key="ph",
+            title="pH值",
+            hint="建议输入 0-14",
+            placeholder="7.2",
+        )
+        self._create_input_field(
+            parent=form,
+            row=3,
+            column=0,
+            key="ammonia",
+            title="氨氮 (mg/L)",
+            hint="例如 0.1",
+            placeholder="0.1",
+        )
+        self._create_input_field(
+            parent=form,
+            row=3,
+            column=1,
+            key="stroke",
+            title="实际冲程 (%)",
+            hint="例：满冲程填 100",
+            placeholder="65",
         )
 
         action_frame = ctk.CTkFrame(panel, fg_color="transparent")
-        action_frame.grid(row=2, column=0, sticky="ew", padx=14, pady=(2, 12))
+        action_frame.grid(row=4, column=0, sticky="ew", padx=14, pady=(2, 12))
         action_frame.grid_columnconfigure(0, weight=3)
         action_frame.grid_columnconfigure(1, weight=1)
         action_frame.grid_columnconfigure(2, weight=1)
@@ -226,8 +244,9 @@ class WaterPredictorApp(ctk.CTk):
             textvariable=self.result_detail_var,
             width=300,
             anchor="w",
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color="#667085",
+            justify="left"
         ).pack(anchor="w", padx=14, pady=(2, 12))
 
         summary_card = ctk.CTkFrame(panel, corner_radius=14, fg_color="#ffffff")
@@ -242,10 +261,12 @@ class WaterPredictorApp(ctk.CTk):
         ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 8))
 
         self._create_summary_row(summary_card, 1, "日期", "date")
-        self._create_summary_row(summary_card, 2, "浊度", "turbidity")
-        self._create_summary_row(summary_card, 3, "供水量", "flow")
-        self._create_summary_row(summary_card, 4, "pH", "ph")
-        self._create_summary_row(summary_card, 5, "温度", "temperature")
+        self._create_summary_row(summary_card, 2, "浊度(NTU)", "turbidity")
+        self._create_summary_row(summary_card, 3, "原水量(Km³/h)", "raw_water")
+        self._create_summary_row(summary_card, 4, "温度(℃)", "temperature")
+        self._create_summary_row(summary_card, 5, "pH值", "ph")
+        self._create_summary_row(summary_card, 6, "氨氮(mg/L)", "ammonia")
+        self._create_summary_row(summary_card, 7, "设定冲程(%)", "stroke")
 
     def _create_input_field(self, parent, row, column, key, title, hint, placeholder, columnspan=1):
         frame = ctk.CTkFrame(parent, corner_radius=10, fg_color="#f6f7f9")
@@ -374,23 +395,25 @@ class WaterPredictorApp(ctk.CTk):
 
         values = {
             "日期": date_text,
-            "turbidity": float(self.entries["turbidity"].get().strip()),
-            "flow": float(self.entries["flow"].get().strip()),
-            "ph": float(self.entries["ph"].get().strip()),
-            "temperature": float(self.entries["temperature"].get().strip()),
-            "ammonia": 0.0,
-            "water_level": 30.0,
-            "alum_per_unit": 0.0,
+            "浑浊度（NTU）": float(self.entries["turbidity"].get().strip()),
+            "原水流量": float(self.entries["raw_water"].get().strip()),
+            "供水量（Km³）": float(self.entries["raw_water"].get().strip()) * 24.0,
+            "温度（℃）": float(self.entries["temperature"].get().strip()),
+            "氨氮（mg/L）": float(self.entries["ammonia"].get().strip()),
+            "pH值": float(self.entries["ph"].get().strip()),
+            "stroke": float(self.entries["stroke"].get().strip()),
         }
         return values
 
     def _update_summary(self, input_data):
         display_map = {
             "date": input_data.get("日期", "--"),
-            "turbidity": self._format_metric(input_data.get("turbidity"), "NTU"),
-            "flow": self._format_metric(input_data.get("flow"), "Km3"),
-            "ph": self._format_metric(input_data.get("ph"), ""),
-            "temperature": self._format_metric(input_data.get("temperature"), "°C"),
+            "turbidity": self._format_metric(input_data.get("浑浊度（NTU）"), ""),
+            "raw_water": self._format_metric(input_data.get("原水流量"), ""),
+            "temperature": self._format_metric(input_data.get("温度（℃）"), ""),
+            "ph": self._format_metric(input_data.get("pH值"), ""),
+            "ammonia": self._format_metric(input_data.get("氨氮（mg/L）"), ""),
+            "stroke": self._format_metric(input_data.get("stroke"), ""),
         }
         for key, label in self.summary_labels.items():
             label.configure(text=display_map.get(key, "--"))
@@ -429,10 +452,31 @@ class WaterPredictorApp(ctk.CTk):
 
         try:
             pred_value, warnings = self.predictor.predict(input_data)
-            self.result_value_var.set(f"{float(pred_value):.2f} kg")
-            self.result_detail_var.set(
-                f"预测完成 | 时间 {datetime.datetime.now().strftime('%H:%M:%S')}"
-            )
+            
+            raw_water_h = input_data.get('原水流量', 0.0)
+            daily_raw_water = raw_water_h * 24.0
+            stroke = input_data.get('stroke', 65.0)
+
+            if daily_raw_water > 0:
+                unit_dosage = (pred_value / daily_raw_water) / 10.0
+                self.result_value_var.set(f"{float(pred_value):.2f} kg ({unit_dosage:.3f} kg/m³)")
+            else:
+                self.result_value_var.set(f"{float(pred_value):.2f} kg")
+                
+            if stroke > 0:
+                hourly_alum_kg = pred_value / 24.0
+                alum_liquid_l = hourly_alum_kg / 1.25
+                pump_flow_l = alum_liquid_l * 4.0
+                freq_hz = (pump_flow_l * 50.0 * 100.0) / (1000.0 * stroke)
+                
+                self.result_detail_var.set(
+                    f"👉 投加泵建议频率: {freq_hz:.2f} Hz\n"
+                    f"预测完成 | 时间 {datetime.datetime.now().strftime('%H:%M:%S')}"
+                )
+            else:
+                self.result_detail_var.set(
+                    f"预测完成 | 时间 {datetime.datetime.now().strftime('%H:%M:%S')}"
+                )
             self._update_summary(input_data)
 
             if warnings:
