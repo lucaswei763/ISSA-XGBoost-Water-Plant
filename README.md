@@ -18,7 +18,7 @@
 2. **运行演示界面：**
 
     ```bash
-    streamlit run app.py
+    streamlit run ui_app.py
     ```
 
 3. **🔒 隐私与数据说明**
