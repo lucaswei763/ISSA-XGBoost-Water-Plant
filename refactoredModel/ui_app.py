@@ -143,16 +143,16 @@ class WaterPredictorApp(ctk.CTk):
         # 氨氮
         self._create_input_field(
             parent=form, row=3, column=0, key="ammonia", title="氨氮 (mg/L)",
-            hint="例如 0.1", placeholder="0.1", columnspan=2
+            hint="例如 0.1", placeholder="0.1"
         )
         # 冲程
         self._create_input_field(
-            parent=form, row=4, column=0, key="stroke", title="冲程 (%)",
-            hint="计量泵冲程百分比，默认65", placeholder="65", columnspan=2
+            parent=form, row=3, column=1, key="stroke", title="冲程 (%)",
+            hint="量程比默认65%", placeholder="65"
         )
 
         action_frame = ctk.CTkFrame(panel, fg_color="transparent")
-        action_frame.grid(row=5, column=0, sticky="ew", padx=14, pady=(2, 12))
+        action_frame.grid(row=4, column=0, sticky="ew", padx=14, pady=(2, 12))
         action_frame.grid_columnconfigure(0, weight=3)
         action_frame.grid_columnconfigure(1, weight=1)
         action_frame.grid_columnconfigure(2, weight=1)
@@ -406,9 +406,9 @@ class WaterPredictorApp(ctk.CTk):
             stroke = input_data.get("冲程", 65.0)
             raw_water_km3 = input_data.get("原水量（Km³）", 0.0)  # 日原水量（千立方米）
 
-            # 计算单位投加量 (kg/Km³)
+            # 计算单位投加量 (kg/m³) - 根据工程历史数据自动 /10 修正量级
             if raw_water_km3 > 0:
-                unit_dosage = daily_dosage / raw_water_km3
+                unit_dosage = (daily_dosage / raw_water_km3) / 10.0
             else:
                 unit_dosage = 0.0
 
@@ -425,7 +425,7 @@ class WaterPredictorApp(ctk.CTk):
             actual_freq = max(0.0, actual_freq)                    # 非负
 
             # 更新投矾量显示
-            self.result_value_var.set(f"{daily_dosage:.2f} kg/d ({unit_dosage:.2f} kg/Km³)")
+            self.result_value_var.set(f"{daily_dosage:.2f} kg/d ({unit_dosage:.3f} kg/m³)")
             self.result_detail_var.set(
                 f"小时投加: {hourly_dosage:.2f} kg/h | 纯矾流量: {pure_volume:.2f} L/h | 稀释后流量: {diluted_volume:.2f} L/h"
             )
