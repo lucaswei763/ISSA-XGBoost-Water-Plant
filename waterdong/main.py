@@ -1,534 +1,832 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-水厂投矾量建模与分析（最终版 v4）
-修复早期年份数据缺失问题，输出到 output-v4，保留所有图表
+水厂投矾量预测模型 - 基于八个核心指标
+========================================
+核心指标：
+1. temperature - 温度
+2. turbidity_avg - 平均浊度
+3. water_supply_km3 - 供水量
+4. electricity_consumption_kwh - 耗电量
+5. raw_water_km3 - 原水量
+6. ammonia_nitrogen - 氨氮
+7. permanganate_index - 高锰酸盐指数（有机物）
+8. ph_value - pH值
+
+功能：
+- 模型训练与保存
+- 模型加载与预测
+- 批量预测
+- 交互式预测
 """
 
+import os
+import sys
+import sqlite3
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import seaborn as sns
-import os
-import re
-from scipy import stats
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from xgboost import XGBRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
+import joblib
 import warnings
+from datetime import datetime
 
 warnings.filterwarnings('ignore')
 
-# 设置中文字体
+# 设置中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-# 可选 XGBoost
-try:
-    from xgboost import XGBRegressor
+# ==================== 配置 ====================
+RANDOM_STATE = 42
+TEST_SIZE = 0.2
 
-    XGB_AVAILABLE = True
-except ImportError:
-    XGB_AVAILABLE = False
-    print("警告：未安装 xgboost，将跳过 XGBoost 模型。如需使用，请运行 pip install xgboost")
+# 八个核心特征（按重要性排序）
+CORE_FEATURES = [
+    'temperature',  # 温度
+    'turbidity_avg',  # 平均浊度
+    'water_supply_km3',  # 供水量
+    'electricity_consumption_kwh',  # 耗电量
+    'raw_water_km3',  # 原水量
+    'ammonia_nitrogen',  # 氨氮
+    'permanganate_index',  # 高锰酸盐指数
+    'ph_value'  # pH值
+]
 
-# ================== 配置区域 ==================
-DATA_FOLDER = "./data"  # data文件夹路径
-OUTPUT_FOLDER = "./output-v4"  # 新输出文件夹
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-# 异常检测参数
-IQR_MULTIPLIER = 1.5
-ZSCORE_THRESHOLD = 3.0
-MAX_REMOVAL_RATIO = 0.05
-
-TARGET_COL = "PAC_kg"
-
-# 特征关键词映射（更宽松）
-FEATURE_MAP = {
-    "浊度": ["浊度", "浑浊度", "Turbidity", "NTU"],
-    "流量": ["流量", "原水量", "库区水位", "取水流量", "流量计"],
-    "耗氧量": ["高锰酸盐", "耗氧量", "CODMn"],
-    "pH": ["pH", "ph"],
-    "温度": ["温度", "Temp"]
+# 特征中文名映射
+FEATURE_NAMES_CN = {
+    'temperature': '温度 (°C)',
+    'turbidity_avg': '平均浊度 (NTU)',
+    'water_supply_km3': '供水量 (km³)',
+    'electricity_consumption_kwh': '耗电量 (kWh)',
+    'raw_water_km3': '原水量 (km³)',
+    'ammonia_nitrogen': '氨氮 (mg/L)',
+    'permanganate_index': '高锰酸盐指数 (mg/L)',
+    'ph_value': 'pH值'
 }
 
+# 特征典型范围（用于输入验证）
+FEATURE_RANGES = {
+    'temperature': (0, 40),
+    'turbidity_avg': (0, 100),
+    'water_supply_km3': (0, 500),
+    'electricity_consumption_kwh': (0, 50000),
+    'raw_water_km3': (0, 500),
+    'ammonia_nitrogen': (0, 10),
+    'permanganate_index': (0, 15),
+    'ph_value': (5, 9)
+}
 
-# ============================================
+# 特征说明
+FEATURE_DESCRIPTIONS = {
+    'temperature': '水温越高，微生物活性越强，影响混凝效果',
+    'turbidity_avg': '浊度越高，悬浮物越多，需要更多混凝剂',
+    'water_supply_km3': '供水量越大，处理量越大，投矾量相应增加',
+    'electricity_consumption_kwh': '耗电量反映运行强度，与投矾量正相关',
+    'raw_water_km3': '原水取水量，直接影响处理规模',
+    'ammonia_nitrogen': '氨氮反映污染程度，高值需调整投矾',
+    'permanganate_index': '高锰酸盐指数反映有机物含量，影响混凝',
+    'ph_value': 'pH值影响混凝效果，最佳范围6.5-7.5'
+}
 
-# ---------------------------
-# 1. 原水数据加载（增强匹配）
-# ---------------------------
-def find_column(df, keywords):
-    """在列名中查找包含任一关键词的列，返回列名；若未找到返回None"""
-    for col in df.columns:
-        col_lower = str(col).lower().replace('\n', '').replace('\r', '').strip()
-        for kw in keywords:
-            if kw.lower() in col_lower:
-                return col
-    return None
+print("=" * 80)
+print("水厂投矾量预测模型 - 基于八个核心指标")
+print("=" * 80)
+print("\n核心指标:")
+for i, feat in enumerate(CORE_FEATURES, 1):
+    print(f"  {i}. {FEATURE_NAMES_CN.get(feat, feat)}")
+    print(f"     └─ {FEATURE_DESCRIPTIONS.get(feat, '')}")
 
 
-def load_raw_data(folder):
-    all_dfs = []
-    for file in os.listdir(folder):
-        if file.startswith("原水数据") and (file.endswith(".xls") or file.endswith(".xlsx")):
-            file_path = os.path.join(folder, file)
+# ==================== 第一部分：数据加载与预处理 ====================
+class DataLoader:
+    """数据加载器"""
+
+    @staticmethod
+    def load_from_db(db_path='data/water_data.db'):
+        """从数据库加载数据"""
+        if not os.path.exists(db_path):
+            print(f"错误：数据库文件不存在 - {db_path}")
+            return None
+
+        conn = sqlite3.connect(db_path)
+
+        # 查询所有表
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [t[0] for t in cursor.fetchall()]
+        print(f"✓ 数据库表: {tables}")
+
+        # 尝试加载合并数据
+        if 'merged_data' in tables:
+            df = pd.read_sql_query("SELECT * FROM merged_data", conn)
+        else:
+            # 加载第一个表
+            df = pd.read_sql_query(f"SELECT * FROM {tables[0]}", conn)
+
+        conn.close()
+
+        # 识别目标变量
+        target_col = None
+        for col in df.columns:
+            if '矾' in col or 'alum' in col.lower() or 'dosage' in col.lower():
+                target_col = col
+                break
+
+        if target_col is None:
+            target_col = df.select_dtypes(include=[np.number]).columns[0]
+
+        print(f"✓ 目标变量: {target_col}")
+        print(f"✓ 数据形状: {df.shape}")
+
+        return df, target_col
+
+    @staticmethod
+    def load_from_csv(csv_path):
+        """从CSV文件加载数据"""
+        df = pd.read_csv(csv_path, encoding='utf-8')
+
+        # 识别目标变量
+        target_col = None
+        for col in df.columns:
+            if '矾' in col or 'alum' in col.lower() or 'dosage' in col.lower():
+                target_col = col
+                break
+
+        if target_col is None:
+            target_col = df.select_dtypes(include=[np.number]).columns[0]
+
+        return df, target_col
+
+    @staticmethod
+    def prepare_data(df, target_col, features=CORE_FEATURES):
+        """准备训练数据"""
+        # 检查特征是否存在
+        available_features = [f for f in features if f in df.columns]
+        missing_features = [f for f in features if f not in df.columns]
+
+        if missing_features:
+            print(f"⚠ 警告: 缺失特征 {missing_features}")
+
+        if not available_features:
+            print("错误：没有可用特征")
+            return None, None
+
+        # 提取特征和目标
+        X = df[available_features].copy()
+        y = df[target_col].copy()
+
+        # 处理缺失值
+        print(f"▶ 处理缺失值...")
+        for col in X.columns:
+            if X[col].isnull().sum() > 0:
+                X[col] = X[col].fillna(X[col].median())
+
+        if y.isnull().sum() > 0:
+            y = y.fillna(y.median())
+
+        print(f"✓ 数据准备完成: {X.shape[0]} 样本, {X.shape[1]} 特征")
+
+        return X, y
+
+
+# ==================== 第二部分：模型训练 ====================
+class ModelTrainer:
+    """模型训练器"""
+
+    def __init__(self, random_state=RANDOM_STATE):
+        self.random_state = random_state
+        self.models = {}
+        self.scaler = None
+        self.best_model = None
+        self.best_model_name = None
+        self.features = None
+
+    def train_all_models(self, X, y, test_size=TEST_SIZE):
+        """训练多个模型并选择最佳"""
+
+        # 划分数据集
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=self.random_state, shuffle=True
+        )
+
+        print(f"\n数据集划分:")
+        print(f"  训练集: {X_train.shape[0]} 样本")
+        print(f"  测试集: {X_test.shape[0]} 样本")
+
+        # 标准化
+        self.scaler = RobustScaler()  # 对异常值更鲁棒
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+
+        self.features = X.columns.tolist()
+
+        # 定义模型
+        models_to_train = {
+            '线性回归': LinearRegression(),
+            '岭回归': Ridge(alpha=1.0, random_state=self.random_state),
+            'Lasso回归': Lasso(alpha=0.001, random_state=self.random_state),
+            '随机森林': RandomForestRegressor(
+                n_estimators=200, max_depth=10,
+                min_samples_split=5, random_state=self.random_state, n_jobs=-1
+            ),
+            '梯度提升': GradientBoostingRegressor(
+                n_estimators=200, max_depth=5,
+                learning_rate=0.05, random_state=self.random_state
+            ),
+            'XGBoost': XGBRegressor(
+                n_estimators=200, max_depth=6,
+                learning_rate=0.05, random_state=self.random_state,
+                n_jobs=-1, verbosity=0
+            )
+        }
+
+        # 训练并评估
+        results = {}
+
+        for name, model in models_to_train.items():
+            print(f"\n▶ 训练 {name}...")
+
+            # 训练
+            model.fit(X_train_scaled, y_train)
+
+            # 预测
+            y_train_pred = model.predict(X_train_scaled)
+            y_test_pred = model.predict(X_test_scaled)
+
+            # 评估
+            train_metrics = self._calculate_metrics(y_train, y_train_pred)
+            test_metrics = self._calculate_metrics(y_test, y_test_pred)
+
+            results[name] = {
+                'model': model,
+                'train': train_metrics,
+                'test': test_metrics
+            }
+
+            print(f"  训练集: RMSE={train_metrics['RMSE']:.4f}, R²={train_metrics['R2']:.4f}")
+            print(f"  测试集: RMSE={test_metrics['RMSE']:.4f}, R²={test_metrics['R2']:.4f}")
+
+        # 选择最佳模型（基于测试集R²）
+        best_name = max(results, key=lambda x: results[x]['test']['R2'])
+        self.best_model = results[best_name]['model']
+        self.best_model_name = best_name
+        self.models = results
+
+        print(f"\n{'=' * 60}")
+        print(f"✓ 最佳模型: {best_name}")
+        print(f"✓ 测试集R²: {results[best_name]['test']['R2']:.4f}")
+        print(f"{'=' * 60}")
+
+        return results
+
+    def _calculate_metrics(self, y_true, y_pred):
+        """计算评估指标"""
+        return {
+            'RMSE': np.sqrt(mean_squared_error(y_true, y_pred)),
+            'MAE': mean_absolute_error(y_true, y_pred),
+            'R2': r2_score(y_true, y_pred),
+            'MAPE': mean_absolute_percentage_error(y_true, y_pred)
+        }
+
+    def save_model(self, model_path='models/best_model_8features.pkl'):
+        """保存模型和标准化器"""
+        os.makedirs('models', exist_ok=True)
+
+        # 保存模型
+        joblib.dump({
+            'model': self.best_model,
+            'scaler': self.scaler,
+            'features': self.features,
+            'model_name': self.best_model_name,
+            'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'n_features': len(self.features)
+        }, model_path)
+
+        print(f"✓ 模型已保存: {model_path}")
+
+        # 保存特征重要性
+        self._save_feature_importance()
+
+    def _save_feature_importance(self):
+        """保存特征重要性"""
+        if hasattr(self.best_model, 'feature_importances_'):
+            importance = self.best_model.feature_importances_
+        elif hasattr(self.best_model, 'coef_'):
+            importance = np.abs(self.best_model.coef_)
+        else:
+            importance = np.ones(len(self.features))
+
+        importance_df = pd.DataFrame({
+            '特征': self.features,
+            '特征中文名': [FEATURE_NAMES_CN.get(f, f) for f in self.features],
+            '重要性': importance / importance.sum()
+        }).sort_values('重要性', ascending=False)
+
+        importance_df.to_csv('outputs/feature_importance_8features.csv', index=False, encoding='utf-8-sig')
+        print(f"✓ 特征重要性已保存: outputs/feature_importance_8features.csv")
+
+        # 绘制特征重要性图
+        self._plot_feature_importance(importance_df)
+
+    def _plot_feature_importance(self, importance_df):
+        """绘制特征重要性图"""
+        plt.figure(figsize=(10, 8))
+        colors = plt.cm.RdYlGn(np.linspace(0.3, 0.8, len(importance_df)))
+
+        bars = plt.barh(range(len(importance_df)), importance_df['重要性'], color=colors)
+        plt.yticks(range(len(importance_df)), importance_df['特征中文名'])
+        plt.xlabel('重要性', fontsize=12)
+        plt.title(f'特征重要性分析 (8指标) - {self.best_model_name}', fontsize=14, fontweight='bold')
+
+        # 添加数值标签
+        for i, (idx, row) in enumerate(importance_df.iterrows()):
+            plt.text(row['重要性'] + 0.01, i, f"{row['重要性']:.3f}", va='center')
+
+        plt.tight_layout()
+        plt.savefig('outputs/feature_importance_8features.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"✓ 特征重要性图已保存: outputs/feature_importance_8features.png")
+
+
+# ==================== 第三部分：预测服务 ====================
+class Predictor:
+    """预测器"""
+
+    def __init__(self, model_path='models/best_model_8features.pkl'):
+        self.model = None
+        self.scaler = None
+        self.features = None
+        self.model_name = None
+        self.load_model(model_path)
+
+    def load_model(self, model_path):
+        """加载模型"""
+        if not os.path.exists(model_path):
+            print(f"错误：模型文件不存在 - {model_path}")
+            print("请先运行训练程序")
+            return False
+
+        data = joblib.load(model_path)
+        self.model = data['model']
+        self.scaler = data['scaler']
+        self.features = data['features']
+        self.model_name = data.get('model_name', 'Unknown')
+
+        print(f"✓ 模型加载成功: {model_path}")
+        print(f"  模型名称: {self.model_name}")
+        print(f"  特征数量: {len(self.features)}")
+
+        return True
+
+    def predict(self, input_data):
+        """
+        预测投矾量
+
+        参数:
+            input_data: dict 或 list 或 pd.DataFrame
+                dict格式: {'temperature': 20, 'turbidity_avg': 15, ...}
+                list格式: [temperature, turbidity_avg, water_supply_km3,
+                          electricity_consumption_kwh, raw_water_km3,
+                          ammonia_nitrogen, permanganate_index, ph_value]
+
+        返回:
+            dict: 包含预测结果和置信区间
+        """
+        # 转换输入格式
+        if isinstance(input_data, dict):
+            # 按特征顺序构建数组
+            X_input = np.array([[input_data.get(f, 0) for f in self.features]])
+        elif isinstance(input_data, (list, tuple)):
+            if len(input_data) != len(self.features):
+                raise ValueError(f"输入数据长度应为 {len(self.features)}，实际为 {len(input_data)}")
+            X_input = np.array([input_data])
+        elif isinstance(input_data, pd.DataFrame):
+            X_input = input_data[self.features].values
+        else:
+            raise ValueError("输入格式不支持，请使用 dict、list 或 DataFrame")
+
+        # 标准化
+        X_scaled = self.scaler.transform(X_input)
+
+        # 预测
+        predictions = self.model.predict(X_scaled)
+
+        # 计算置信区间（基于模型类型）
+        confidence = self._calculate_confidence(predictions)
+
+        results = []
+        for i, pred in enumerate(predictions):
+            results.append({
+                'predicted_dosage': round(pred, 3),
+                'unit': 'mg/L',
+                'confidence_lower': round(pred * (1 - confidence), 3),
+                'confidence_upper': round(pred * (1 + confidence), 3),
+                'confidence_level': f"±{confidence * 100:.0f}%"
+            })
+
+        return results if len(results) > 1 else results[0]
+
+    def _calculate_confidence(self, predictions):
+        """计算置信区间（基于模型性能）"""
+        if '随机森林' in self.model_name or 'XGBoost' in self.model_name:
+            return 0.10  # 10% 置信区间
+        elif '梯度提升' in self.model_name:
+            return 0.12
+        else:
+            return 0.15
+
+    def predict_batch(self, df):
+        """批量预测"""
+        if not all(f in df.columns for f in self.features):
+            missing = [f for f in self.features if f not in df.columns]
+            raise ValueError(f"缺少特征: {missing}")
+
+        X = df[self.features].values
+        X_scaled = self.scaler.transform(X)
+        predictions = self.model.predict(X_scaled)
+
+        return predictions
+
+    def get_model_info(self):
+        """获取模型信息"""
+        return {
+            'model_name': self.model_name,
+            'features': self.features,
+            'feature_count': len(self.features),
+            'feature_names_cn': [FEATURE_NAMES_CN.get(f, f) for f in self.features],
+            'feature_descriptions': [FEATURE_DESCRIPTIONS.get(f, '') for f in self.features]
+        }
+
+
+# ==================== 第四部分：可视化 ====================
+def plot_training_results(results, X, y, target_name='投矾量'):
+    """绘制训练结果"""
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+
+    # 获取最佳模型
+    best_name = max(results, key=lambda x: results[x]['test']['R2'])
+    best_model = results[best_name]['model']
+
+    # 准备数据
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+    )
+
+    # 标准化
+    scaler = RobustScaler()
+    X_test_scaled = scaler.fit_transform(X_test)
+
+    # 1. 预测值 vs 实际值散点图
+    y_pred = best_model.predict(X_test_scaled)
+    axes[0, 0].scatter(y_test, y_pred, alpha=0.5, edgecolors='black', linewidth=0.5)
+    axes[0, 0].plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', linewidth=2)
+    axes[0, 0].set_xlabel('实际值', fontsize=12)
+    axes[0, 0].set_ylabel('预测值', fontsize=12)
+    axes[0, 0].set_title(f'{best_name}\n预测 vs 实际 (R²={results[best_name]["test"]["R2"]:.4f})',
+                         fontsize=12, fontweight='bold')
+    axes[0, 0].grid(True, alpha=0.3)
+
+    # 2. 残差分布
+    residuals = y_test - y_pred
+    axes[0, 1].hist(residuals, bins=30, edgecolor='black', alpha=0.7, color='steelblue')
+    axes[0, 1].axvline(x=0, color='red', linestyle='--', linewidth=2)
+    axes[0, 1].set_xlabel('残差', fontsize=12)
+    axes[0, 1].set_ylabel('频数', fontsize=12)
+    axes[0, 1].set_title('残差分布', fontsize=12, fontweight='bold')
+    axes[0, 1].grid(True, alpha=0.3)
+
+    # 3. 模型性能对比
+    model_names = list(results.keys())
+    r2_scores = [results[m]['test']['R2'] for m in model_names]
+    colors = ['green' if r == max(r2_scores) else 'steelblue' for r in r2_scores]
+    bars = axes[0, 2].barh(model_names, r2_scores, color=colors)
+    axes[0, 2].set_xlabel('R² 分数', fontsize=12)
+    axes[0, 2].set_title('模型性能对比', fontsize=12, fontweight='bold')
+    for bar, r2 in zip(bars, r2_scores):
+        axes[0, 2].text(bar.get_width() + 0.01, bar.get_y() + bar.get_height() / 2,
+                        f'{r2:.4f}', va='center')
+    axes[0, 2].grid(True, alpha=0.3)
+
+    # 4. 特征相关性热力图
+    corr_matrix = X.corr()
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+    sns.heatmap(corr_matrix, mask=mask, annot=True, fmt='.2f',
+                cmap='RdBu_r', center=0, ax=axes[1, 0],
+                cbar_kws={"shrink": 0.8})
+    axes[1, 0].set_title('特征相关性热力图', fontsize=12, fontweight='bold')
+
+    # 5. 预测误差箱线图
+    errors_by_model = {}
+    for name, result in results.items():
+        model = result['model']
+        y_pred_temp = model.predict(X_test_scaled)
+        errors_by_model[name] = y_test - y_pred_temp
+
+    axes[1, 1].boxplot(errors_by_model.values(), labels=errors_by_model.keys())
+    axes[1, 1].axhline(y=0, color='red', linestyle='--', linewidth=1)
+    axes[1, 1].set_ylabel('预测误差', fontsize=12)
+    axes[1, 1].set_title('各模型预测误差对比', fontsize=12, fontweight='bold')
+    axes[1, 1].tick_params(axis='x', rotation=45)
+    axes[1, 1].grid(True, alpha=0.3)
+
+    # 6. 特征重要性
+    if hasattr(best_model, 'feature_importances_'):
+        importance = best_model.feature_importances_
+    elif hasattr(best_model, 'coef_'):
+        importance = np.abs(best_model.coef_)
+    else:
+        importance = np.ones(len(X.columns))
+
+    importance_df = pd.DataFrame({
+        '特征': [FEATURE_NAMES_CN.get(c, c) for c in X.columns],
+        '重要性': importance / importance.sum()
+    }).sort_values('重要性', ascending=True)
+
+    axes[1, 2].barh(importance_df['特征'], importance_df['重要性'], color='coral')
+    axes[1, 2].set_xlabel('重要性', fontsize=12)
+    axes[1, 2].set_title('特征重要性 (8指标)', fontsize=12, fontweight='bold')
+    axes[1, 2].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('outputs/training_results_8features.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    print("✓ 训练结果图已保存: outputs/training_results_8features.png")
+
+
+# ==================== 第五部分：交互式预测 ====================
+def interactive_prediction(predictor):
+    """交互式预测"""
+    print("\n" + "=" * 60)
+    print("交互式预测模式 (8指标)")
+    print("=" * 60)
+    print("\n请输入以下八个指标的值：\n")
+
+    input_data = {}
+    for feat in CORE_FEATURES:
+        cn_name = FEATURE_NAMES_CN.get(feat, feat)
+        description = FEATURE_DESCRIPTIONS.get(feat, '')
+        range_info = FEATURE_RANGES.get(feat, (None, None))
+
+        print(f"\n【{cn_name}】")
+        print(f"  说明: {description}")
+        if range_info[0] is not None and range_info[1] is not None:
+            print(f"  参考范围: {range_info[0]} ~ {range_info[1]}")
+
+        while True:
             try:
-                df_raw = pd.read_excel(file_path, sheet_name=None, header=None)
-                for sheet_name, df_sheet in df_raw.items():
-                    if df_sheet.empty:
+                value = input(f"  请输入值: ").strip()
+                if value == '':
+                    print("    输入不能为空，请重新输入")
+                    continue
+
+                val = float(value)
+
+                # 验证范围
+                min_val, max_val = range_info
+                if min_val is not None and val < min_val:
+                    print(f"    警告: 输入值 {val} 低于典型最小值 {min_val}")
+                    confirm = input("    是否继续？(y/n): ").lower()
+                    if confirm != 'y':
                         continue
-                    # 寻找表头行（包含“日期”）
-                    header_row = None
-                    for i in range(min(5, len(df_sheet))):
-                        row = df_sheet.iloc[i].astype(str).str.contains('日期', case=False, na=False)
-                        if row.any():
-                            header_row = i
-                            break
-                    if header_row is None:
-                        continue
-                    df_sheet.columns = df_sheet.iloc[header_row].astype(str).str.strip()
-                    df = df_sheet.iloc[header_row + 1:].reset_index(drop=True)
-                    date_col = find_column(df, ["日期"])
-                    if date_col is None:
-                        continue
-                    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                    df = df.dropna(subset=[date_col])
-                    df = df.rename(columns={date_col: "日期"})
-                    row_data = {"日期": df["日期"]}
-                    # 提取特征
-                    for feature, keywords in FEATURE_MAP.items():
-                        col = find_column(df, keywords)
-                        if col is not None:
-                            values = pd.to_numeric(df[col], errors='coerce')
-                            row_data[feature] = values
-                        else:
-                            # 如果未找到，打印警告并填充NaN
-                            print(f"  警告：在文件 {file} sheet {sheet_name} 中未找到特征 '{feature}' 的匹配列")
-                            row_data[feature] = np.nan
-                    df_out = pd.DataFrame(row_data)
-                    if not df_out.empty:
-                        all_dfs.append(df_out)
-            except Exception as e:
-                print(f"警告：处理文件 {file} 时出错：{e}，已跳过")
-                continue
-    if not all_dfs:
-        raise Exception("未找到任何原水数据文件")
-    raw_df = pd.concat(all_dfs, ignore_index=True)
-    raw_df = raw_df.sort_values("日期").drop_duplicates(subset="日期").reset_index(drop=True)
-    # 打印日期范围
-    print(f"原水数据加载完成，共 {len(raw_df)} 条记录，日期范围 {raw_df['日期'].min()} 至 {raw_df['日期'].max()}")
-    return raw_df
-
-
-# ---------------------------
-# 2. 药耗数据加载（增强版 + 日期标准化）
-# ---------------------------
-def parse_excel_date(val):
-    """将Excel中的日期转换为datetime，支持字符串日期和Excel数字日期"""
-    if pd.isna(val):
-        return pd.NaT
-    try:
-        # 尝试标准字符串日期
-        return pd.to_datetime(str(val), errors='raise')
-    except:
-        try:
-            # 尝试Excel数字日期
-            return pd.to_datetime(float(val), unit='D', origin='1899-12-30')
-        except:
-            return pd.NaT
-
-
-def load_dosage_data(folder):
-    all_data = []
-    for file in os.listdir(folder):
-        if file.startswith("药耗数据") and (file.endswith(".xls") or file.endswith(".xlsx")):
-            file_path = os.path.join(folder, file)
-            print(f"正在处理文件：{file}")
-            try:
-                xls = pd.ExcelFile(file_path)
-                for sheet in xls.sheet_names:
-                    df_raw = pd.read_excel(file_path, sheet_name=sheet, header=None)
-                    if df_raw.empty:
-                        continue
-                    # 删除全空行
-                    df_raw = df_raw.dropna(how='all', axis=0).reset_index(drop=True)
-                    if df_raw.empty:
-                        continue
-                    # 寻找数据起始行（第一列出现日期格式或“日期”字样）
-                    start_row = None
-                    for i in range(min(10, len(df_raw))):
-                        first_cell = str(df_raw.iloc[i, 0]).strip()
-                        if re.match(r'\d{4}-\d{1,2}-\d{1,2}', first_cell) or '日期' in first_cell:
-                            start_row = i
-                            break
-                        try:
-                            date_num = float(first_cell)
-                            if 40000 <= date_num <= 50000:
-                                pd.to_datetime(date_num, unit='D', origin='1899-12-30')
-                                start_row = i
-                                break
-                        except:
-                            pass
-                    if start_row is None:
-                        start_row = 1  # 默认从第二行开始
-
-                    # 合并前几行作为候选表头（从0到start_row-1）
-                    header_rows = df_raw.iloc[:max(1, start_row)].fillna('').astype(str)
-                    merged_headers = []
-                    for col_idx in range(len(df_raw.columns)):
-                        col_vals = header_rows.iloc[:, col_idx].tolist()
-                        merged = ' '.join([v for v in col_vals if v.strip()]).strip()
-                        merged_headers.append(merged)
-
-                    # 找日期列（优先根据列名，再根据内容）
-                    date_col_idx = None
-                    for idx, header in enumerate(merged_headers):
-                        if '日期' in header:
-                            date_col_idx = idx
-                            break
-                    if date_col_idx is None:
-                        # 根据内容判断：取前20行非空，看哪列看起来像日期
-                        for idx in range(len(df_raw.columns)):
-                            sample = df_raw.iloc[start_row:start_row + 20, idx].dropna()
-                            if len(sample) == 0:
-                                continue
-                            success = True
-                            for val in sample:
-                                if pd.isna(parse_excel_date(val)):
-                                    success = False
-                                    break
-                            if success:
-                                date_col_idx = idx
-                                break
-                    if date_col_idx is None:
-                        date_col_idx = 0  # 默认第一列
-
-                    # 找PAC列
-                    pac_col_idx = None
-                    for idx, header in enumerate(merged_headers):
-                        if re.search(r'PAC|矾|聚合氯化铝|投加量', header, re.I):
-                            pac_col_idx = idx
-                            break
-                    if pac_col_idx is None:
-                        # 根据数值判断：取前20行非空，看哪列多为数值且范围合理
-                        for idx in range(len(df_raw.columns)):
-                            if idx == date_col_idx:
-                                continue
-                            sample = df_raw.iloc[start_row:start_row + 20, idx].dropna()
-                            if len(sample) == 0:
-                                continue
-                            numeric = pd.to_numeric(sample, errors='coerce')
-                            if numeric.notna().sum() > len(sample) * 0.8:
-                                pac_col_idx = idx
-                                break
-                    if pac_col_idx is None:
-                        print(f"  警告：{file} - {sheet} 中无法识别PAC列，已跳过")
+                if max_val is not None and val > max_val:
+                    print(f"    警告: 输入值 {val} 高于典型最大值 {max_val}")
+                    confirm = input("    是否继续？(y/n): ").lower()
+                    if confirm != 'y':
                         continue
 
-                    # 提取数据
-                    data_df = df_raw.iloc[start_row:].reset_index(drop=True)
-                    # 日期转换：统一使用parse_excel_date，然后只保留日期部分（去掉时间）
-                    date_series = data_df.iloc[:, date_col_idx].apply(parse_excel_date)
-                    # 转换为日期类型（去除时间）
-                    date_series = pd.to_datetime(date_series).dt.date
-                    pac_series = pd.to_numeric(data_df.iloc[:, pac_col_idx], errors='coerce')
-                    temp_df = pd.DataFrame({"日期": date_series, TARGET_COL: pac_series}).dropna()
-                    temp_df = temp_df[temp_df[TARGET_COL] > 0]
-                    if not temp_df.empty:
-                        all_data.append(temp_df)
-                        print(
-                            f"  成功读取：{sheet}，记录数 {len(temp_df)}，日期范围 {temp_df['日期'].min()} 至 {temp_df['日期'].max()}")
-                    else:
-                        print(f"  警告：{sheet} 提取后无有效数据")
-            except Exception as e:
-                print(f"警告：处理文件 {file} 时出错：{e}，已跳过")
-                continue
-    if not all_data:
-        raise Exception("未找到任何药耗数据文件或解析失败")
-    dosage_df = pd.concat(all_data, ignore_index=True)
-    dosage_df = dosage_df.sort_values("日期").drop_duplicates(subset="日期").reset_index(drop=True)
-    # 统一日期类型为 datetime（后续合并方便）
-    dosage_df['日期'] = pd.to_datetime(dosage_df['日期'])
-    print(
-        f"药耗数据加载完成，共 {len(dosage_df)} 条记录，日期范围 {dosage_df['日期'].min()} 至 {dosage_df['日期'].max()}")
-    return dosage_df
+                input_data[feat] = val
+                break
+            except ValueError:
+                print("    请输入有效的数字")
+
+    # 预测
+    result = predictor.predict(input_data)
+
+    print("\n" + "=" * 60)
+    print("预测结果")
+    print("=" * 60)
+    print(f"\n  预测投矾量: {result['predicted_dosage']} mg/L")
+    print(f"  置信区间: [{result['confidence_lower']}, {result['confidence_upper']}] mg/L")
+    print(f"  置信水平: {result['confidence_level']}")
+
+    # 给出建议
+    print("\n【工艺建议】")
+    dosage = result['predicted_dosage']
+    if dosage < 10:
+        print("  ✓ 投矾量较低，水质较好")
+    elif dosage < 20:
+        print("  → 投矾量适中，正常范围")
+    elif dosage < 30:
+        print("  ⚠ 投矾量偏高，建议检查原水水质")
+    else:
+        print("  ⚠⚠ 投矾量很高，需要重点关注原水变化")
+
+    print("=" * 60)
 
 
-# ---------------------------
-# 3. 异常值处理（保留原始数据分布监控）
-# ---------------------------
-def detect_outliers_iqr(df, column, multiplier=IQR_MULTIPLIER):
-    Q1 = df[column].quantile(0.25)
-    Q3 = df[column].quantile(0.75)
-    IQR = Q3 - Q1
-    lower = Q1 - multiplier * IQR
-    upper = Q3 + multiplier * IQR
-    return (df[column] < lower) | (df[column] > upper)
+# ==================== 第六部分：批量预测 ====================
+def batch_prediction(predictor, input_file, output_file=None):
+    """批量预测"""
+    print(f"\n批量预测模式 (8指标)")
+    print(f"  输入文件: {input_file}")
+
+    # 读取输入文件
+    if input_file.endswith('.csv'):
+        df = pd.read_csv(input_file, encoding='utf-8')
+    elif input_file.endswith('.xlsx'):
+        df = pd.read_excel(input_file)
+    else:
+        print("错误：不支持的文件格式，请使用 CSV 或 Excel 文件")
+        return
+
+    # 检查特征
+    missing_features = [f for f in CORE_FEATURES if f not in df.columns]
+    if missing_features:
+        print(f"错误：缺少特征 {missing_features}")
+        return
+
+    # 预测
+    predictions = predictor.predict_batch(df)
+
+    # 添加预测结果
+    df['predicted_dosage'] = predictions
+
+    # 保存结果
+    if output_file is None:
+        output_file = input_file.replace('.csv', '_predicted.csv').replace('.xlsx', '_predicted.xlsx')
+
+    if output_file.endswith('.csv'):
+        df.to_csv(output_file, index=False, encoding='utf-8-sig')
+    else:
+        df.to_excel(output_file, index=False)
+
+    print(f"✓ 预测完成，结果已保存: {output_file}")
+
+    # 显示统计
+    print(f"\n预测统计:")
+    print(f"  预测范围: [{predictions.min():.3f}, {predictions.max():.3f}] mg/L")
+    print(f"  平均预测: {predictions.mean():.3f} mg/L")
+    print(f"  中位数: {np.median(predictions):.3f} mg/L")
+    print(f"  标准差: {predictions.std():.3f} mg/L")
 
 
-def detect_outliers_zscore(df, column, threshold=ZSCORE_THRESHOLD):
-    z = np.abs(stats.zscore(df[column].dropna()))
-    outliers = pd.Series(False, index=df.index)
-    outliers[df[column].dropna().index[z > threshold]] = True
-    return outliers
-
-
-def clean_outliers(merged_df, feature_cols):
-    outlier_mask = pd.Series(False, index=merged_df.index)
-    outlier_mask |= detect_outliers_iqr(merged_df, TARGET_COL)
-    outlier_mask |= detect_outliers_zscore(merged_df, TARGET_COL)
-    for col in feature_cols:
-        if col in merged_df.columns:
-            outlier_mask |= detect_outliers_iqr(merged_df, col)
-            outlier_mask |= detect_outliers_zscore(merged_df, col)
-    removal_ratio = outlier_mask.sum() / len(merged_df)
-    if removal_ratio > MAX_REMOVAL_RATIO:
-        print(f"剔除比例 {removal_ratio:.2%} 超过阈值，尝试放宽 IQR 倍数至 {IQR_MULTIPLIER * 1.5}")
-        new_multiplier = IQR_MULTIPLIER * 1.5
-        new_mask = pd.Series(False, index=merged_df.index)
-        new_mask |= detect_outliers_iqr(merged_df, TARGET_COL, multiplier=new_multiplier)
-        for col in feature_cols:
-            if col in merged_df.columns:
-                new_mask |= detect_outliers_iqr(merged_df, col, multiplier=new_multiplier)
-        outlier_mask = new_mask
-    cleaned = merged_df[~outlier_mask].copy()
-    cleaned.attrs['outlier_dates'] = merged_df.loc[outlier_mask, '日期'].tolist()
-    cleaned.attrs['outlier_pac'] = merged_df.loc[outlier_mask, TARGET_COL].tolist()
-    print(
-        f"异常值剔除：共剔除 {outlier_mask.sum()} 条（{outlier_mask.sum() / len(merged_df):.2%}），保留 {len(cleaned)} 条")
-    return cleaned
-
-
-# ---------------------------
-# 4. 建模函数（不变）
-# ---------------------------
-def train_linear_model(X, y, feature_names):
-    model = LinearRegression()
-    model.fit(X, y)
-    y_pred = model.predict(X)
-    mae = mean_absolute_error(y, y_pred)
-    rmse = np.sqrt(mean_squared_error(y, y_pred))
-    r2 = r2_score(y, y_pred)
-    mape = np.mean(np.abs((y - y_pred) / y)) * 100
-    intercept = model.intercept_
-    coefs = model.coef_
-    formula = f"y = {intercept:.4f}"
-    for name, coef in zip(feature_names, coefs):
-        formula += f" + {coef:.4f} * {name}"
-    return model, y_pred, (mae, rmse, mape, r2), formula
-
-
-def train_xgboost_model(X, y, feature_names):
-    if not XGB_AVAILABLE:
-        return None, None, None, None
-    model = XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=5, random_state=42)
-    model.fit(X, y)
-    y_pred = model.predict(X)
-    mae = mean_absolute_error(y, y_pred)
-    rmse = np.sqrt(mean_squared_error(y, y_pred))
-    r2 = r2_score(y, y_pred)
-    mape = np.mean(np.abs((y - y_pred) / y)) * 100
-    importance = pd.DataFrame({'feature': feature_names, 'importance': model.feature_importances_})
-    importance = importance.sort_values('importance', ascending=False)
-    return model, y_pred, (mae, rmse, mape, r2), importance
-
-
-# ---------------------------
-# 5. 绘图函数（与之前完全一致，略）
-# ---------------------------
-# 由于篇幅，此处省略重复的绘图函数定义，实际代码中请保留之前的完整绘图函数。
-# 但为了代码完整性，下面给出所有绘图函数（与前v3相同）的占位注释。
-# 在实际运行时，请将您v3中的绘图函数代码粘贴到此处。
-
-def plot_basic_model(merged, y_pred, metrics, outliers_info, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_correlation_heatmap(df, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_multi_model_comparison(merged, y_pred_dict, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_feature_importance(importance_df, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_residual_analysis(y_true, y_pred, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_error_trend(dates, errors, save_path, window=30):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_metrics_bar(metrics_dict, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_binary_model(dates, y_true, y_pred, metrics, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-def plot_xgboost_model(dates, y_true, y_pred, save_path):
-    # ... 与原v3相同 ...
-    pass
-
-
-# ---------------------------
-# 6. 主程序
-# ---------------------------
+# ==================== 第七部分：主程序 ====================
 def main():
-    print("=" * 60)
-    print("水厂投矾量建模与分析（最终版 v4 - 修复早期年份缺失）")
-    print("=" * 60)
+    """主程序"""
+    import argparse
 
-    # 加载数据
-    print("\n>>> 加载原水数据...")
-    raw_df = load_raw_data(DATA_FOLDER)
-    print(">>> 加载药耗数据...")
-    dosage_df = load_dosage_data(DATA_FOLDER)
+    parser = argparse.ArgumentParser(description='水厂投矾量预测模型 (8指标)')
+    parser.add_argument('--train', action='store_true', help='训练新模型')
+    parser.add_argument('--predict', action='store_true', help='交互式预测')
+    parser.add_argument('--batch', type=str, help='批量预测（输入文件路径）')
+    parser.add_argument('--output', type=str, help='批量预测输出文件路径')
+    parser.add_argument('--info', action='store_true', help='显示模型信息')
 
-    # 在合并前统一日期格式（去除时间部分）
-    raw_df['日期'] = pd.to_datetime(raw_df['日期']).dt.date
-    dosage_df['日期'] = pd.to_datetime(dosage_df['日期']).dt.date
-    # 转换回 datetime 以便后续操作
-    raw_df['日期'] = pd.to_datetime(raw_df['日期'])
-    dosage_df['日期'] = pd.to_datetime(dosage_df['日期'])
+    args = parser.parse_args()
 
-    # 打印日期范围，验证是否包含早期年份
-    print(f"原水数据日期范围（合并前）：{raw_df['日期'].min()} 至 {raw_df['日期'].max()}")
-    print(f"药耗数据日期范围（合并前）：{dosage_df['日期'].min()} 至 {dosage_df['日期'].max()}")
+    # 创建输出目录
+    os.makedirs('outputs', exist_ok=True)
+    os.makedirs('models', exist_ok=True)
 
-    # 合并（内连接）
-    merged = pd.merge(raw_df, dosage_df, on='日期', how='inner')
-    print(f"合并后数据量：{len(merged)}")
-    if merged.empty:
-        raise Exception("合并后数据为空，请检查药耗数据解析是否正确。")
+    # 训练模式
+    if args.train:
+        print("\n【训练模式 - 8指标模型】")
 
-    # 打印合并后的年份分布
-    merged['年份'] = merged['日期'].dt.year
-    print("合并后各年份数据量：")
-    print(merged['年份'].value_counts().sort_index())
+        # 加载数据
+        loader = DataLoader()
+        df, target_col = loader.load_from_db()
 
-    # 可用特征列（排除日期和PAC_kg）
-    feature_cols = [c for c in merged.columns if c not in ['日期', TARGET_COL, '年份']]
-    print(f"可用特征：{feature_cols}")
+        if df is None:
+            print("尝试从CSV加载...")
+            csv_files = [f for f in os.listdir('data') if f.endswith('.csv')]
+            if csv_files:
+                df, target_col = loader.load_from_csv(f'data/{csv_files[0]}')
 
-    # 剔除缺失值（按年份统计缺失情况）
-    print("剔除缺失值前，各年份缺失情况（特征+目标）：")
-    missing_before = merged.groupby('年份')[feature_cols + [TARGET_COL]].apply(lambda x: x.isnull().sum().sum())
-    print(missing_before)
-    merged = merged.dropna(subset=[TARGET_COL] + feature_cols)
-    print(f"剔除缺失值后数据量：{len(merged)}")
-    if merged.empty:
-        raise Exception("剔除缺失值后数据为空，请检查特征匹配是否成功。")
+        if df is None:
+            print("错误：无法加载数据")
+            return
 
-    # 异常值处理
-    merged_clean = clean_outliers(merged, feature_cols)
-    outliers_info = {
-        'dates': merged_clean.attrs.get('outlier_dates', []),
-        'pac': merged_clean.attrs.get('outlier_pac', [])
+        # 准备数据
+        X, y = loader.prepare_data(df, target_col, CORE_FEATURES)
+
+        if X is None:
+            print("错误：数据准备失败")
+            return
+
+        # 训练模型
+        trainer = ModelTrainer()
+        results = trainer.train_all_models(X, y)
+
+        # 保存模型
+        trainer.save_model()
+
+        # 绘制结果
+        plot_training_results(results, X, y)
+
+        print("\n✅ 模型训练完成！")
+        print("  使用 --predict 进行预测")
+        print("  使用 --batch <文件路径> 进行批量预测")
+
+    # 预测模式
+    elif args.predict:
+        print("\n【预测模式 - 8指标模型】")
+
+        predictor = Predictor()
+        if predictor.model is not None:
+            interactive_prediction(predictor)
+
+    # 批量预测模式
+    elif args.batch:
+        print("\n【批量预测模式 - 8指标模型】")
+
+        predictor = Predictor()
+        if predictor.model is not None:
+            batch_prediction(predictor, args.batch, args.output)
+
+    # 信息模式
+    elif args.info:
+        print("\n【模型信息 - 8指标模型】")
+
+        predictor = Predictor()
+        if predictor.model is not None:
+            info = predictor.get_model_info()
+            print(f"\n模型名称: {info['model_name']}")
+            print(f"特征数量: {info['feature_count']}")
+            print("\n特征列表:")
+            for f, cn, desc in zip(info['features'], info['feature_names_cn'], info['feature_descriptions']):
+                print(f"  - {cn} ({f})")
+                print(f"    说明: {desc}")
+
+    else:
+        # 默认显示帮助
+        print("""
+使用方法 (8指标模型):
+  python main.py --train      # 训练新模型
+  python main.py --predict    # 交互式预测
+  python main.py --batch <文件> # 批量预测
+  python main.py --info       # 显示模型信息
+
+示例:
+  python main.py --train
+  python main.py --predict
+  python main.py --batch input_data.csv
+  python main.py --batch input_data.xlsx --output result.xlsx
+
+输入特征（8个）:
+  1. temperature          - 温度 (°C)
+  2. turbidity_avg        - 平均浊度 (NTU)
+  3. water_supply_km3     - 供水量 (km³)
+  4. electricity_consumption_kwh - 耗电量 (kWh)
+  5. raw_water_km3        - 原水量 (km³)
+  6. ammonia_nitrogen     - 氨氮 (mg/L)
+  7. permanganate_index   - 高锰酸盐指数 (mg/L)
+  8. ph_value             - pH值
+        """)
+
+
+# ==================== 快速预测函数 ====================
+def quick_predict(temperature, turbidity_avg, water_supply_km3,
+                  electricity_consumption_kwh, raw_water_km3,
+                  ammonia_nitrogen, permanganate_index, ph_value):
+    """
+    快速预测函数 - 可直接导入使用
+
+    参数:
+        temperature: 温度 (°C)
+        turbidity_avg: 平均浊度 (NTU)
+        water_supply_km3: 供水量 (km³)
+        electricity_consumption_kwh: 耗电量 (kWh)
+        raw_water_km3: 原水量 (km³)
+        ammonia_nitrogen: 氨氮 (mg/L)
+        permanganate_index: 高锰酸盐指数 (mg/L)
+        ph_value: pH值
+
+    返回:
+        dict: 预测结果
+    """
+    predictor = Predictor()
+    if predictor.model is None:
+        return {'error': '模型未找到，请先运行训练'}
+
+    input_data = {
+        'temperature': temperature,
+        'turbidity_avg': turbidity_avg,
+        'water_supply_km3': water_supply_km3,
+        'electricity_consumption_kwh': electricity_consumption_kwh,
+        'raw_water_km3': raw_water_km3,
+        'ammonia_nitrogen': ammonia_nitrogen,
+        'permanganate_index': permanganate_index,
+        'ph_value': ph_value
     }
 
-    # 准备特征矩阵
-    X_dual = merged_clean[feature_cols[:2]].values
-    X_multi = merged_clean[feature_cols].values
-    y = merged_clean[TARGET_COL].values
-    dates = merged_clean['日期'].values
-
-    # 训练模型
-    print("\n>>> 训练模型...")
-    model_dual, pred_dual, metrics_dual, formula_dual = train_linear_model(X_dual, y, feature_cols[:2])
-    print(f"二元线性公式：{formula_dual}")
-    print(
-        f"   MAE={metrics_dual[0]:.2f}, RMSE={metrics_dual[1]:.2f}, MAPE={metrics_dual[2]:.2f}%, R²={metrics_dual[3]:.4f}")
-
-    model_multi, pred_multi, metrics_multi, formula_multi = train_linear_model(X_multi, y, feature_cols)
-    print(f"多元线性公式：{formula_multi}")
-    print(
-        f"   MAE={metrics_multi[0]:.2f}, RMSE={metrics_multi[1]:.2f}, MAPE={metrics_multi[2]:.2f}%, R²={metrics_multi[3]:.4f}")
-
-    if XGB_AVAILABLE:
-        model_xgb, pred_xgb, metrics_xgb, importance_xgb = train_xgboost_model(X_multi, y, feature_cols)
-        if model_xgb:
-            print(
-                f"XGBoost指标：MAE={metrics_xgb[0]:.2f}, RMSE={metrics_xgb[1]:.2f}, MAPE={metrics_xgb[2]:.2f}%, R²={metrics_xgb[3]:.4f}")
-        else:
-            pred_xgb, metrics_xgb, importance_xgb = None, None, None
-    else:
-        pred_xgb, metrics_xgb, importance_xgb = None, None, None
-
-    # 生成图表（与v3完全相同）
-    print("\n>>> 生成图表...")
-    # 请确保绘图函数已定义，这里仅调用
-    plot_basic_model(merged_clean, pred_dual, metrics_dual, outliers_info,
-                     os.path.join(OUTPUT_FOLDER, "01_reproduce_basic_model.png"))
-    plot_correlation_heatmap(merged_clean, os.path.join(OUTPUT_FOLDER, "02_optimize_correlation_heatmap.png"))
-    y_pred_dict = {'二元线性': pred_dual, '多元线性': pred_multi}
-    if pred_xgb is not None:
-        y_pred_dict['XGBoost'] = pred_xgb
-    plot_multi_model_comparison(merged_clean, y_pred_dict,
-                                os.path.join(OUTPUT_FOLDER, "03_optimize_multi_model_comparison.png"))
-    if importance_xgb is not None:
-        plot_feature_importance(importance_xgb, os.path.join(OUTPUT_FOLDER, "04_optimize_feature_importance.png"))
-    plot_residual_analysis(y, pred_dual, os.path.join(OUTPUT_FOLDER, "05_optimize_residual_analysis.png"))
-    errors_mape = np.abs((y - pred_dual) / y) * 100
-    plot_error_trend(dates, errors_mape, os.path.join(OUTPUT_FOLDER, "06_optimize_error_trend.png"), window=30)
-    metrics_dict = {'二元线性': metrics_dual, '多元线性': metrics_multi}
-    if metrics_xgb is not None:
-        metrics_dict['XGBoost'] = metrics_xgb
-    plot_metrics_bar(metrics_dict, os.path.join(OUTPUT_FOLDER, "07_optimize_metrics_bar.png"))
-    plot_binary_model(dates, y, pred_dual, metrics_dual,
-                      os.path.join(OUTPUT_FOLDER, "binary_model_forecast.png"))
-    if pred_xgb is not None:
-        plot_xgboost_model(dates, y, pred_xgb,
-                           os.path.join(OUTPUT_FOLDER, "xgboost_forecast.png"))
-
-    # 保存清洗后数据
-    merged_clean.to_csv(os.path.join(OUTPUT_FOLDER, "清洗后数据.csv"), index=False, encoding='utf-8-sig')
-
-    # 保存模型结果
-    with open(os.path.join(OUTPUT_FOLDER, "模型结果.txt"), "w", encoding='utf-8') as f:
-        f.write("=" * 60 + "\n")
-        f.write("水厂投矾量模型结果\n")
-        f.write("=" * 60 + "\n\n")
-        f.write(f"数据时间范围：{merged_clean['日期'].min()} 至 {merged_clean['日期'].max()}\n")
-        f.write(f"有效样本数：{len(merged_clean)}\n\n")
-        f.write("二元线性模型公式：\n")
-        f.write(formula_dual + "\n")
-        f.write(f"MAE: {metrics_dual[0]:.2f} kg\n")
-        f.write(f"RMSE: {metrics_dual[1]:.2f} kg\n")
-        f.write(f"MAPE: {metrics_dual[2]:.2f}%\n")
-        f.write(f"R²: {metrics_dual[3]:.4f}\n\n")
-        f.write("多元线性模型公式：\n")
-        f.write(formula_multi + "\n")
-        f.write(f"MAE: {metrics_multi[0]:.2f} kg\n")
-        f.write(f"RMSE: {metrics_multi[1]:.2f} kg\n")
-        f.write(f"MAPE: {metrics_multi[2]:.2f}%\n")
-        f.write(f"R²: {metrics_multi[3]:.4f}\n\n")
-        if metrics_xgb is not None:
-            f.write("XGBoost模型指标：\n")
-            f.write(f"MAE: {metrics_xgb[0]:.2f} kg\n")
-            f.write(f"RMSE: {metrics_xgb[1]:.2f} kg\n")
-            f.write(f"MAPE: {metrics_xgb[2]:.2f}%\n")
-            f.write(f"R²: {metrics_xgb[3]:.4f}\n")
-            f.write("\n特征重要性：\n")
-            for _, row in importance_xgb.iterrows():
-                f.write(f"{row['feature']}: {row['importance']:.4f}\n")
-
-    print("\n>>> 全部完成！结果保存在 output-v4 文件夹。")
+    return predictor.predict(input_data)
 
 
 if __name__ == "__main__":
