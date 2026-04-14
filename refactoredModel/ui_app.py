@@ -346,14 +346,26 @@ class WaterPredictorApp(ctk.CTk):
         hourly_water_km3 = float(self.entries["flow"].get().strip())
         daily_water_km3 = hourly_water_km3 * 24.0   # 转换为日原水量 (km³/d)
 
+        turbidity_val = float(self.entries["turbidity"].get().strip())
+        temp_val = float(self.entries["temperature"].get().strip())
+        ammonia_val = float(self.entries["ammonia"].get().strip())
+        ph_val = float(self.entries["ph"].get().strip())
+        stroke_val = float(self.entries["stroke"].get().strip()) if self.entries["stroke"].get().strip() else 65.0
+
         values = {
             "日期": date_text,
-            "浑浊度（NTU）_0点": float(self.entries["turbidity"].get().strip()),
+            # 同时注入新版和旧版模型认知的键名，让它“盲切”兼容
+            "浑浊度（NTU）_0点": turbidity_val,
+            "浑浊度（NTU）": turbidity_val,
             "原水量（Km³）": daily_water_km3,
-            "温度（℃）_9点": float(self.entries["temperature"].get().strip()),
-            "氨氮（mg/L）_9点": float(self.entries["ammonia"].get().strip()),
-            "pH值_9点": float(self.entries["ph"].get().strip()),
-            "冲程": float(self.entries["stroke"].get().strip()) if self.entries["stroke"].get().strip() else 65.0,
+            "供水量（Km³）": daily_water_km3,
+            "温度（℃）_9点": temp_val,
+            "温度（℃）": temp_val,
+            "氨氮（mg/L）_9点": ammonia_val,
+            "氨氮（mg/L）": ammonia_val,
+            "pH值_9点": ph_val,
+            "pH值": ph_val,
+            "冲程": stroke_val,
             "小时原水量_km3": hourly_water_km3,
         }
         return values
@@ -361,11 +373,11 @@ class WaterPredictorApp(ctk.CTk):
     def _update_summary(self, input_data):
         display_map = {
             "date": input_data.get("日期", "--"),
-            "turbidity": self._format_metric(input_data.get("浑浊度（NTU）_0点"), ""),
+            "turbidity": self._format_metric(input_data.get("浑浊度（NTU）_0点", input_data.get("浑浊度（NTU）")), ""),
             "flow": self._format_metric(input_data.get("小时原水量_km3", 0), "km³/h"),
-            "temperature": self._format_metric(input_data.get("温度（℃）_9点"), ""),
-            "ph": self._format_metric(input_data.get("pH值_9点"), ""),
-            "ammonia": self._format_metric(input_data.get("氨氮（mg/L）_9点"), ""),
+            "temperature": self._format_metric(input_data.get("温度（℃）_9点", input_data.get("温度（℃）")), ""),
+            "ph": self._format_metric(input_data.get("pH值_9点", input_data.get("pH值")), ""),
+            "ammonia": self._format_metric(input_data.get("氨氮（mg/L）_9点", input_data.get("氨氮（mg/L）")), ""),
             "stroke": self._format_metric(input_data.get("冲程", ""), "%"),
         }
         for key, label in self.summary_labels.items():
