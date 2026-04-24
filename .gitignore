@@ -134,3 +134,8 @@ htmlcov/
 *.xlsx
 *.spec
 *.zip
+*.bak
+*.png
+*.db
+*.pkl
+*.csv
