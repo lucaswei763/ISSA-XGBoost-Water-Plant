@@ -55,72 +55,20 @@ def mean_absolute_percentage_error(y_true, y_pred):
     return np.mean(np.abs((y_true[non_zero] - y_pred[non_zero]) / y_true[non_zero])) * 100
 
 
-def load_and_preprocess_data():
-    """清洗与特征重构逻辑（已修复7天平滑截断和空值遗漏问题）"""
+def load_and_preprocess_data(model_dir='models'):
+    """使用重构后的通用数据加载与预处理机制（对接 19 维特征）"""
     print("正在加载数据与模型...")
-    db_path = 'data/water_data.db'
-    if not os.path.exists(db_path):
-        sys.exit("错误：数据库文件不存在。请确保在项目根目录运行。")
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = [t[0] for t in cursor.fetchall()]
-
-    if 'merged_data' in tables:
-        df = pd.read_sql_query("SELECT * FROM merged_data", conn)
-        date_col = next((c for c in df.columns if '日期' in c or 'date' in c.lower()), df.columns[0])
-        df['日期'] = pd.to_datetime(df[date_col])
-    else:
-        consumption_table = next((t for t in tables if 'consumption' in t.lower() or '药耗' in t), tables[0])
-        quality_table = next((t for t in tables if 'quality' in t.lower() or '水质' in t),
-                             tables[1] if len(tables) > 1 else tables[0])
-        df_c = pd.read_sql_query(f"SELECT * FROM {consumption_table}", conn)
-        df_q = pd.read_sql_query(f"SELECT * FROM {quality_table}", conn)
-        dc_c = next((c for c in df_c.columns if '日期' in c or 'date' in c.lower()), df_c.columns[0])
-        dc_q = next((c for c in df_q.columns if '日期' in c or 'date' in c.lower()), df_q.columns[0])
-        df_c[dc_c] = pd.to_datetime(df_c[dc_c])
-        df_q[dc_q] = pd.to_datetime(df_q[dc_q])
-        df = pd.merge(df_c, df_q, left_on=dc_c, right_on=dc_q, how='inner')
-        df['日期'] = df[dc_c]
-
-    conn.close()
-    df = df.sort_values(by='日期').reset_index(drop=True)
-
-    with open('models/metadata.json', 'r', encoding='utf-8') as f:
-        meta = json.load(f)
-    target_col = meta['target_col']
-    features = meta['features']
-
-    # 物理极限异常清洗
-    df_clean = df[df[target_col] <= 5000].reset_index(drop=True)
-
-    num_cols = [c for c in df_clean.select_dtypes(include=[np.number]).columns if c != '日期']
-    if num_cols:
-        df_clean[num_cols] = df_clean[num_cols].fillna(method='ffill').fillna(df_clean[num_cols].median())
-
-    for lag in [1, 2, 3]:
-        if f'{target_col}_lag_{lag}天' in features:
-            df_clean[f'{target_col}_lag_{lag}天'] = df_clean[target_col].shift(lag)
-
-    turb_col = next((c for c in df_clean.columns if '浊度' in c or 'turbidity' in c.lower()), None)
-    flow_col = next((c for c in df_clean.columns if '流量' in c or 'flow' in c.lower() or 'supply' in c.lower()), None)
-
-    if turb_col:
-        df_clean[f'{turb_col}_3天平滑'] = df_clean[turb_col].rolling(3, min_periods=1).mean()
-        df_clean[f'{turb_col}_7天平滑'] = df_clean[turb_col].rolling(7, min_periods=1).mean()
-    if flow_col:
-        df_clean[f'{flow_col}_3天平滑'] = df_clean[flow_col].rolling(3, min_periods=1).mean()
-        df_clean[f'{flow_col}_7天平滑'] = df_clean[flow_col].rolling(7, min_periods=1).mean()
-    if turb_col and flow_col:
-        df_clean['平滑后浊度_流量交互'] = df_clean[f'{turb_col}_3天平滑'] * df_clean[f'{flow_col}_3天平滑']
-
-    new_cols = [c for c in df_clean.columns if '平滑' in c or 'lag' in c or '交互' in c]
-    if new_cols:
-        df_clean[new_cols] = df_clean[new_cols].fillna(method='ffill').fillna(0)
-
-    df_clean = df_clean.dropna(subset=features + [target_col]).reset_index(drop=True)
-    return df_clean, features, target_col
+    from utils import load_and_preprocess_data as utils_load_data
+    
+    # 自动调用 utils 的方法加载清洗并对齐好的数据
+    _, _, _, _, X_full_scaled, y_full, full_dates, _, _ = utils_load_data(model_dir)
+    
+    df_clean = pd.DataFrame({
+        '日期': pd.to_datetime(full_dates),
+        '实际投矾量': y_full
+    })
+    
+    return df_clean, X_full_scaled, '实际投矾量'
 
 
 def evaluate_reliability(r2, mape, acc_10):
@@ -138,13 +86,9 @@ def generate_report():
         os.makedirs(REPORT_DIR)
 
     model_dir = 'models/resnet' if os.path.exists('models/resnet/best_model.pkl') else ('models/xgboost' if os.path.exists('models/xgboost/best_model.pkl') else 'models')
-    df_clean, features, target_col = load_and_preprocess_data(model_dir=model_dir)
+    df_clean, X_scaled, target_col = load_and_preprocess_data(model_dir=model_dir)
 
-    scaler = joblib.load(os.path.join(model_dir, 'scaler.pkl'))
     model = joblib.load(os.path.join(model_dir, 'best_model.pkl'))
-
-    X = df_clean[features]
-    X_scaled = scaler.transform(X)
     df_clean['预测投矾量'] = model.predict(X_scaled)
 
     target_years = [2021, 2022, 2023, 2024, 2025]
