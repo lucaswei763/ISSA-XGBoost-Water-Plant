@@ -1,0 +1,27 @@
+# ==========================================
+# 智慧水务投药预测系统 - 核心依赖包 (High-level Dependencies)
+# ==========================================
+
+# 1. 基础科学计算与数据处理
+numpy==2.0.2
+pandas==2.3.3
+scipy==1.13.1
+openpyxl==3.1.5
+
+# 2. 传统机器学习与评估
+scikit-learn==1.6.1
+joblib==1.5.3
+xgboost==2.1.4
+
+# 3. 深度学习框架 (ResNet/MLP)
+torch==2.8.0
+
+# 4. 数据可视化
+matplotlib==3.9.4
+seaborn==0.13.2
+
+# 5. 桌面客户端 GUI (CustomTkinter)
+customtkinter==5.2.2
+
+# 6. 程序打包构建工具 (可选)
+pyinstaller==6.19.0

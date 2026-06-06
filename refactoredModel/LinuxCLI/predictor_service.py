@@ -1,36 +1,27 @@
 """
-文件名称：refactoredModel/predictor_service.py
-所属类别：重构核心生产代码 (Refactored Core Production) / Linux CLI 部署代码镜像
+文件名称：refactoredModel/LinuxCLI/predictor_service.py
+所属类别：Linux CLI 部署代码 (Linux CLI Release)
 
 功能描述：
-    本项目模型加载与投药决策推理逻辑的底层封装服务类 `WaterPredictor`。
-    支持：
-    1. 在初始化时动态定位并加载模型目录下的四大金刚权重文件 (`best_model.pkl`、`scaler.pkl`、`selected_features.pkl`、`imputer.pkl`)；
-    2. 支持预测输入时的高维特征自动补齐与缺省值中位数（`SimpleImputer` 训练统计值）自动填充；
-    3. 后台调用 `utils.py` 进行 7 维衍生特征的实时特征工程计算，完成 19 维模型输入对齐。
+    专为 Linux 服务器环境打包的模型决策推理封装服务类 `WaterPredictor`。
+    支持在无图形界面的服务器端自动加载模型对应的四个关键权重文件 (`best_model.pkl`、`scaler.pkl`、`selected_features.pkl`、`imputer.pkl`)，
+    并能够自动补全输入中缺失的高维特征，动态进行特征工程计算并对齐。
 
 运行与使用方法：
-    在 Python 代码中导入并实例化：
+    在 Python 中导入并实例化使用：
     from predictor_service import WaterPredictor
-    predictor = WaterPredictor(model_dir='models/resnet')
+    predictor = WaterPredictor(model_dir='models')
     
-    # 执行预测，只需传入基础测得指标
-    input_data = {
-        "日期": "2026-06-06",
-        "浑浊度（NTU）": 21.5,
-        "原水量（Km³）": 7.2
-    }
-    daily_dosage, has_warnings = predictor.predict(input_data)
+    # 传入指标字典进行单次推理
+    pred, warnings = predictor.predict(input_dict)
 
 调用与依赖关系：
-    - 被 `ui_app.py`、`cli_app.py`、`app.py` 导入和调用，是所有预测入口的核心依赖。
-    - 导入并依赖于 `utils.add_engineered_features` 进行 7 维衍生特征计算。
-    - 依赖 `joblib` 加载序列化模型。
+    - 被同级目录下的部署主程序 `cli_app.py` 调用。
+    - 导入并调用同级目录下的 `utils.py` 完成特征工程的衍生变量添加工作。
+    - 该目录是完全自包含的，可独立复制到 Linux 机器部署，无 customtkinter 图形依赖。
 
 设计细节与关键备注：
-    - 带有对 PyInstaller 打包环境的自适应检查（通过 `getattr(sys, 'frozen', False)` ），支持读取解压路径 `_MEIPASS` 下的权重。
-    - 具有智能路径解析功能，如果指定默认 `models` 目录，则在有 `resnet` 或 `xgboost` 子目录存在时，自动切换到对应的最佳模型目录。
-    - 在 `predict` 中，如果模型输出值小于 0，则自动裁剪并置为 0.0 并抛出范围警告。
+    - 本文件与根目录的 predictor_service.py 逻辑完全一致，为保障 LinuxCLI 目录能独立完整地被部署并开箱即用，在此放置镜像。
 """
 import os
 import joblib

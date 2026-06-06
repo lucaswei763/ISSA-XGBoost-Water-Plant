@@ -1,8 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-模型拟合能力自动化评估与报告生成脚本 (年度汇总版)
-生成: 2021-2025年，每年1个文件夹，内含1张全年拟合图 + 1份年度可信度评价MD报告
+文件名称：refactoredModel/generate_report.py
+所属类别：重构核心生产代码 (Refactored Core Production)
+
+功能描述：
+    水厂投药模型拟合能力年度评估报告自动化生成脚本。
+    该程序自动读取水厂历史数据库并根据当前激活的预测模型 (ResNet 或 XGBoost) 执行 2021-2025 各年份的回溯推断，
+    针对每个自然年度执行：
+    1. 计算量化评价指标：包括方差解释力 R² 决定系数、日平均绝对偏差 MAE、相对偏差百分比 MAPE 等；
+    2. 统计高精度区间的概率分布 (误差在 <=5% 和 <=10% 以内的天数占比)；
+    3. 自动生成各年度 365 天日加矾量的实际值-预测值拟合对比全景图 (PNG 长图)；
+    4. 自动生成年度模型可信度分析 Markdown 报告文档。
+
+运行与使用方法：
+    直接在控制台执行：
+    python generate_report.py
+    
+    结果文件将被保存在新生成的 `Model_Evaluation_Report_Annual` 目录下，按年份文件夹（如 `2021年`）分类。
+
+调用与依赖关系：
+    - 运行依赖于 `models/metadata.json` 所指定的输入特征名与目标字段。
+    - 依赖 `joblib` 读取当前已打包的最佳模型和归一化参数。
+    - 输出物用于水厂工艺审核与模型拟合水平的专家组报告汇报。
 """
 
 import os
@@ -117,10 +137,11 @@ def generate_report():
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR)
 
-    df_clean, features, target_col = load_and_preprocess_data()
+    model_dir = 'models/resnet' if os.path.exists('models/resnet/best_model.pkl') else ('models/xgboost' if os.path.exists('models/xgboost/best_model.pkl') else 'models')
+    df_clean, features, target_col = load_and_preprocess_data(model_dir=model_dir)
 
-    scaler = joblib.load('models/scaler.pkl')
-    model = joblib.load('models/best_model.pkl')
+    scaler = joblib.load(os.path.join(model_dir, 'scaler.pkl'))
+    model = joblib.load(os.path.join(model_dir, 'best_model.pkl'))
 
     X = df_clean[features]
     X_scaled = scaler.transform(X)

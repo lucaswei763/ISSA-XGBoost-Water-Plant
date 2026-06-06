@@ -1,3 +1,24 @@
+"""
+文件名称：refactoredModel/xgb_issa_train.py
+所属类别：重构核心生产代码 (Refactored Core Production)
+
+功能描述：
+    独立训练并优化 ISSA-XGBoost 模型的主程序流水线。
+    执行步骤包括：
+    1. 加载并预处理水厂工况历史数据集，导出模型专用的转换特征列表和 imputer 缺省值；
+    2. 实例化并调用 ISSA 麻雀寻优算法（32 个种群粒子，迭代 200 次）搜索最优的 6 维 XGBoost 超参数；
+    3. 使用最优的参数子集拟合并训练最终的 XGBRegressor，绘制训练与测试 RMSE 损失下降曲线；
+    4. 将模型保存为 `models/xgboost/best_model.pkl` 并调用 `utils.evaluate_and_plot` 生成按年连续的回归预测对比图。
+
+运行与使用方法：
+    直接在控制台启动模型自动参数寻优与训练：
+    python xgb_issa_train.py
+
+调用与依赖关系：
+    - 导入并依赖 `utils.py` 的数据处理、画图评估模块。
+    - 导入并调用 `issa_optimizer.ISSA_XGBoost` 进行粒子群参数寻优。
+    - 训练产出物被保存至 `models/xgboost/best_model.pkl`，供 `ui_app.py`、`app.py`、`cli_app.py` 加载和提供决策建议。
+"""
 import time
 from xgboost import XGBRegressor
 import joblib
@@ -15,7 +36,7 @@ def main():
     # 1. 使用优化的通用数据处理函数
     print("\n🔍 读取并处理数据集中...")
     try:
-        X_train_scaled, X_test_scaled, y_train, y_test, X_full_scaled, y_full, full_dates, water_test, water_full = load_and_preprocess_data()
+        X_train_scaled, X_test_scaled, y_train, y_test, X_full_scaled, y_full, full_dates, water_test, water_full = load_and_preprocess_data(model_dir='models/xgboost')
     except Exception as e:
         print(f"❌ 数据加载失败: {e}")
         return
@@ -66,11 +87,11 @@ def main():
     except Exception as e:
         print(f"⚠️ 无法保存 XGBoost Loss 曲线: {e}")
         
-    # 保存最终训练好的模型到 models 目录
+    # 保存最终训练好的模型到 models/xgboost 目录
     import os
-    os.makedirs('models', exist_ok=True)
-    joblib.dump(final_model, 'models/best_model.pkl')
-    print("✅ XGBoost 模型及环境变量已成功打包保存至 models 目录，现在可以直接打开运行 ui_app！")
+    os.makedirs('models/xgboost', exist_ok=True)
+    joblib.dump(final_model, 'models/xgboost/best_model.pkl')
+    print("✅ XGBoost 模型及环境变量已成功打包保存至 models/xgboost 目录，现在可以直接打开运行 ui_app！")
     
     # 4. 测试集评估与绘制全量按年份连续图表
     y_pred = final_model.predict(X_test_scaled)     # 仅用于评估测算

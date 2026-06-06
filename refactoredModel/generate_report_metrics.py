@@ -1,7 +1,26 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-水厂投矾量预测模型 - 汇报专用指标生成器
+文件名称：refactoredModel/generate_report_metrics.py
+所属类别：重构核心生产代码 (Refactored Core Production)
+
+功能描述：
+    水厂投药量预测模型在专业技术汇报、科技成果鉴定以及 PPT 演示时所需的“亮点指标与工业落地指标”一键生成计算工具。
+    主要职责：
+    1. 自动连接并读取本地 SQLite 数据库中的水务记录；
+    2. 自动载入最新模型特征与权重，进行最近两年半工况的数据前向推断；
+    3. 统计两套核心指标体系：
+       - 统计学拟合指标：包括 R² 决定系数、MAE、RMSE；
+       - 业务可落地指标：测算误差分别在 ±10%、±15%、±20% 以内的天数占比（对应工业现场加矾容忍阈值）；
+    4. 在控制台直接输出科技创新亮点与指标汇总看板。
+
+运行与使用方法：
+    直接在控制台执行：
+    python generate_report_metrics.py
+
+调用与依赖关系：
+    - 导入并使用 `utils` 中的特征工程列表与扩展函数。
+    - 用于在向水厂领导层或专家组做项目汇报时，提供客观量化的数据证明。
 """
 
 import sqlite3
@@ -13,27 +32,20 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 print("=> 正在加载模型与最新数据计算汇报指标...\n")
 
 # 1. 加载数据与模型
-conn = sqlite3.connect('data/water_data.db')
+conn = sqlite3.connect('data/水务数据中心.db')
 cursor = conn.cursor()
 cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
 tables = [t[0] for t in cursor.fetchall()]
 
-if 'merged_data' in tables:
-    df = pd.read_sql_query("SELECT * FROM merged_data", conn)
-    date_col = next((c for c in df.columns if '日期' in c or 'date' in c.lower()), df.columns[0])
-    df['日期'] = pd.to_datetime(df[date_col])
+if 'water_records' in tables:
+    df = pd.read_sql_query("SELECT * FROM water_records", conn)
+elif 'daily_records' in tables:
+    df = pd.read_sql_query("SELECT * FROM daily_records", conn)
 else:
-    # 兼容分表加载逻辑...
-    consumption_table = next((t for t in tables if 'consumption' in t.lower() or '药耗' in t), tables[0])
-    quality_table = next((t for t in tables if 'quality' in t.lower() or '水质' in t), tables[1] if len(tables) > 1 else tables[0])
-    df_c = pd.read_sql_query(f"SELECT * FROM {consumption_table}", conn)
-    df_q = pd.read_sql_query(f"SELECT * FROM {quality_table}", conn)
-    dc_c = next((c for c in df_c.columns if '日期' in c or 'date' in c.lower()), df_c.columns[0])
-    dc_q = next((c for c in df_q.columns if '日期' in c or 'date' in c.lower()), df_q.columns[0])
-    df_c[dc_c] = pd.to_datetime(df_c[dc_c])
-    df_q[dc_q] = pd.to_datetime(df_q[dc_q])
-    df = pd.merge(df_c, df_q, left_on=dc_c, right_on=dc_q, how='inner')
-    df['日期'] = df[dc_c]
+    df = pd.read_sql_query(f"SELECT * FROM {tables[0]}", conn)
+
+date_col = next((c for c in df.columns if '日期' in c or 'date' in c.lower()), df.columns[0])
+df['日期'] = pd.to_datetime(df[date_col], format='%Y年%m月%d日' if '年' in str(df[date_col].iloc[0]) else None)
 conn.close()
 
 df = df.sort_values(by='日期').reset_index(drop=True)
@@ -42,39 +54,30 @@ df = df.sort_values(by='日期').reset_index(drop=True)
 cutoff_date = df['日期'].max() - pd.Timedelta(days=900)
 df = df[df['日期'] >= cutoff_date].reset_index(drop=True)
 
-target_col = next((c for c in df.columns if any(kw in c.lower() for kw in ['矾', 'alum', '投矾', '药耗']) and 'lag' not in c.lower()), None)
+from utils import BASE_FEATURE_COLS, TARGET_COL, add_engineered_features
+
+target_col = TARGET_COL
 df = df[df[target_col] <= 5000].reset_index(drop=True) # 剔除异常值
 
-# 复刻特征
+# Clean invalid characters to nan
 df_clean = df.copy()
-numeric_cols = [c for c in df_clean.select_dtypes(include=[np.number]).columns if c != '日期']
-df_clean[numeric_cols] = df_clean[numeric_cols].ffill().fillna(df_clean[numeric_cols].median())
+df_clean.replace(['/', '\\', '', ' '], np.nan, inplace=True)
+df_clean[BASE_FEATURE_COLS + [target_col]] = df_clean[BASE_FEATURE_COLS + [target_col]].apply(pd.to_numeric, errors='coerce')
+df_clean = df_clean.dropna(subset=[target_col]).copy()
 
-df_clean['年'] = df_clean['日期'].dt.year
-df_clean['月'] = df_clean['日期'].dt.month
-df_clean['星期几'] = df_clean['日期'].dt.dayofweek
-df_clean['是否为周末'] = (df_clean['星期几'] >= 5).astype(int)
+# Load model artifacts
+import os
+model_dir = 'models/resnet' if os.path.exists('models/resnet/best_model.pkl') else ('models/xgboost' if os.path.exists('models/xgboost/best_model.pkl') else 'models')
+imputer = joblib.load(os.path.join(model_dir, 'imputer.pkl'))
+scaler = joblib.load(os.path.join(model_dir, 'scaler.pkl'))
+selected_features = joblib.load(os.path.join(model_dir, 'selected_features.pkl'))
+model = joblib.load(os.path.join(model_dir, 'best_model.pkl'))
 
-for lag in [1, 2, 3]:
-    df_clean[f'{target_col}_lag_{lag}天'] = df_clean[target_col].shift(lag)
+# Impute using median values from training
+df_clean[BASE_FEATURE_COLS] = imputer.transform(df_clean[BASE_FEATURE_COLS])
 
-turb_col = next((c for c in df_clean.columns if '浊度' in c or 'turbidity' in c.lower()), None)
-flow_col = next((c for c in df_clean.columns if '流量' in c or 'flow' in c.lower() or 'supply' in c.lower()), None)
-
-if turb_col:
-    df_clean[f'{turb_col}_3天平滑'] = df_clean[turb_col].rolling(3, min_periods=1).mean()
-    df_clean[f'{turb_col}_7天平滑'] = df_clean[turb_col].rolling(7, min_periods=1).mean()
-if flow_col:
-    df_clean[f'{flow_col}_3天平滑'] = df_clean[flow_col].rolling(3, min_periods=1).mean()
-    df_clean[f'{flow_col}_7天平滑'] = df_clean[flow_col].rolling(7, min_periods=1).mean()
-if turb_col and flow_col:
-    df_clean['平滑后浊度_流量交互'] = df_clean[f'{turb_col}_3天平滑'] * df_clean[f'{flow_col}_3天平滑']
-
-df_clean = df_clean.bfill().fillna(0)
-
-scaler = joblib.load('models/scaler.pkl')
-selected_features = joblib.load('models/selected_features.pkl')
-model = joblib.load('models/best_model.pkl')
+# Generate features
+df_clean = add_engineered_features(df_clean)
 
 X = df_clean[selected_features].copy()
 y_true = df_clean[target_col].values

@@ -1,5 +1,32 @@
+"""
+文件名称：refactoredModel/issa_optimizer.py
+所属类别：重构核心生产代码 (Refactored Core Production)
 
-# issa_optimizer.py
+功能描述：
+    改进麻雀搜索算法 (ISSA, Improved Sparrow Search Algorithm) 的核心数学计算类 `ISSA_XGBoost`。
+    专门用于优化 XGBoost 回归器的 6 个核心超参数：
+    1. `n_estimators`: 决策树个数 (树的规模)；
+    2. `max_depth`: 决策树最大深度；
+    3. `learning_rate`: 学习率 (收缩因子)；
+    4. `subsample`: 样本采样比例；
+    5. `colsample_bytree`: 特征采样比例；
+    6. `reg_lambda`: L2 正则化权重。
+
+运行与使用方法：
+    在模型训练管线中导入并实例化：
+    from issa_optimizer import ISSA_XGBoost
+    optimizer = ISSA_XGBoost(pop_size=10, max_iter=10)
+    best_params = optimizer.optimize(X_train, y_train)
+
+调用与依赖关系：
+    - 被 `train_hybrid.py` 和 `xgb_issa_train.py` 导入调用，用于在模型开始训练前自动搜索最优的 XGBoost 参数配置。
+    - 依赖 `xgboost.XGBRegressor` 做底层的评估器。
+    - 使用 `sklearn.model_selection.TimeSeriesSplit` (时间序列交叉验证) 配合负平均绝对误差 (`neg_mean_absolute_error`) 评估粒子适应度，避免数据时序泄露。
+
+设计细节与关键备注：
+    - 使用了 Sine 混沌映射 (`_sine_map_initialization`) 代替传统的均匀分布随机数进行种群位置初始化，提高了空间覆盖均匀度和全局收敛性。
+    - 包含了发现者位置更新、加入者位置更新 (带伪逆矩阵运算 `linalg.pinv` 对齐维度) 以及警戒者警戒位置更新，自适应退火收缩搜索区间权重。
+"""
 import numpy as np
 import math
 from xgboost import XGBRegressor

@@ -1,7 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-水厂投矾量预测系统 - 动态特征读取版 UI
+文件名称：refactoredModel/origin_ui_app.py
+所属类别：重构核心生产代码 (Refactored Core Production) / 历史留存代码 (已弃用)
+
+功能描述：
+    重构前的水厂投加量预测桌面 GUI 应用程序历史原型脚本。
+    该文件基于选取的 6 维关键指标进行动态输入表单渲染，并执行基础的 `predictor_service` 调用与展示。
+
+运行与使用方法：
+    本文件为历史存档，目前已不推荐使用。如果需要运行，需依赖 customtkinter：
+    python origin_ui_app.py
+
+调用与依赖关系：
+    - 属于历史遗留代码，当前生产系统的主界面已全面升级为新版 [ui_app.py](file:///Users/weiyihang/PycharmProjects/WaterPlant/refactoredModel/ui_app.py)。
+    - 调用 `predictor_service.WaterPredictor`。
+
+设计细节与关键备注：
+    - ⚠️ **注意**：本文件已经废弃，仅作为历史代码的架构留存与布局参考，不参与当前的预测决策。
 """
 
 import os

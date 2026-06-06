@@ -1,10 +1,32 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-水厂投矾量预测 Web 服务（最终稳定版）
-- 根据模型实际特征名构造输入（包含 alum_per_unit）
-- 健康检查、单条预测、批量预测、热加载
-- 日志轮转、优雅退出、请求追踪
+文件名称：refactoredModel/app.py
+所属类别：重构核心生产代码 (Refactored Core Production)
+
+功能描述：
+    本项目的水务预测后端 Web API 服务。为外部对接系统 (如中控系统、网页端或移动端 App)
+    提供标准化的 HTTP 预测接口。支持的 API 路由包括：
+    - `/health` [GET]: 后端服务健康状态检测，返回当前加载的模型类别、特征范围与版本。
+    - `/v1/predict` [POST]: 单次工况参数预测接口。
+    - `/v1/batch` [POST]: Excel 批量工况预测与泵频率自动计算结果回写下载接口。
+    - `/reload` [POST]: 带有安全校验 Token 的在线模型权重热加载 (Hot Reload) 接口。
+
+运行与使用方法：
+    本地开发环境调试运行：
+    python app.py
+    
+    默认部署参数可通过环境变量设置：
+    PORT=5000 HOST=0.0.0.0 MODEL_DIR=models python app.py
+
+调用与依赖关系：
+    - 导入并使用 `predictor_service.WaterPredictor` (from predictor_service) 提供推理运算。
+    - 服务底层默认采用 `waitress` 作为生产级 Web 服务器承载 Flask 实例；如果 waitress 未安装则回退到 Flask 开发级内置服务器。
+
+设计细节与关键备注：
+    - 集成了日志轮转功能 (`logging.handlers.RotatingFileHandler`)，生成的日志保存在 `logs/app.log`，限制单文件最大 10MB 并最多备份 5 个。
+    - 具有内置的请求追踪机制，为每个 API 调用注入唯一的 `request_id` (uuid4的前8位) 以便于请求链路追踪。
+    - 支持优雅退出 (`SIGINT`/`SIGTERM` 信号捕获)，在服务停止时自动调用预测器 `predictor.close()` 清理资源。
 """
 
 import os

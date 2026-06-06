@@ -1,3 +1,30 @@
+"""
+文件名称：refactoredModel/build_database.py
+所属类别：重构核心生产代码 (Refactored Core Production)
+
+功能描述：
+    本项目的数据仓储层构件类 `WaterDataLoader`。
+    用于解析水厂提供的 Excel 历史记录大表（包括 2021 年至 2026 年的日度药耗与原水水质特征）并初始化建立本地 SQLite 数据库：
+    1. 清洗原始 Excel 列名（去除隐藏换行、空格等杂乱字符）；
+    2. 将中文日期（例如 'YYYY年MM月DD日'）标准化为标准 ISO 格式（'YYYY-MM-DD'）；
+    3. 连接并覆盖写入本地 SQLite 的 `water_records` 表。
+
+运行与使用方法：
+    1. 直接运行以从默认位置的合并大表 Excel 重建本地 SQLite 数据库：
+       python build_database.py
+    2. 可以在其他模块中导入类，用于快速按时间范围拉取清洗后的 DataFrame 数据：
+       from build_database import WaterDataLoader
+       loader = WaterDataLoader(db_path='data/water_data.db')
+       df = loader.get_all_data()
+
+调用与依赖关系：
+    - 被核心特征工程与预处理工具 `utils.py` (以及 Linux 版本的 utils) 导入以读取特征数据集。
+    - 依赖 `openpyxl` 来读取现代 Excel 格式文件。
+    - 数据库存储路径为 `lucaswei/DataBase/21年-26年药耗、原水数据/水务数据中心.db`。
+
+设计细节与关键备注：
+    - 数据库写入时采用 `if_exists='replace'`，确保每次重构或清空数据时是一次性完全重写。
+"""
 import os
 import pandas as pd
 import sqlite3
@@ -107,7 +134,16 @@ class WaterDataLoader:
         conn.close()
         
         if '日期' in df.columns:
-            df['日期'] = pd.to_datetime(df['日期'])
+            try:
+                # 优先尝试中文年月日格式
+                df['日期'] = pd.to_datetime(df['日期'], format='%Y年%m月%d日')
+            except Exception:
+                try:
+                    # 尝试标准日期格式
+                    df['日期'] = pd.to_datetime(df['日期'], format='%Y-%m-%d')
+                except Exception:
+                    # 兜底通用解析
+                    df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
         return df
 
     def get_data_by_date_range(self, start_date, end_date):

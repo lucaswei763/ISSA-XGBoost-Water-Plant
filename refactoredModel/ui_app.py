@@ -1,6 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""水厂投矾量预测系统桌面界面（含变频泵频率计算，原水量输入单位为 km³/h）。"""
+"""
+文件名称：refactoredModel/ui_app.py
+所属类别：重构核心生产代码 (Refactored Core Production)
+
+功能描述：
+    本项目的主图形用户界面 (GUI) 预测软件。提供可视化的水质参数和原水量输入窗口，
+    能够一键运行所加载的最优预测模型 (双头残差网络 ResNet 或 ISSA-XGBoost) 并实时显示：
+    1. 日加矾量预测值 (kg/d) 与单位投加量 (kg/m³)；
+    2. 加药变频泵建议频率 (Hz) 的自动换算。
+
+运行与使用方法：
+    确保已安装 requirements.txt 内包含的桌面端 GUI 依赖包 (如 customtkinter 等)，然后直接运行：
+    python ui_app.py
+
+调用与依赖关系：
+    - 导入并使用 `predictor_service.WaterPredictor` (from predictor_service) 来加载训练好的权重并执行推理。
+    - 被 PyInstaller 构建脚本 `投矾智能预测.spec` 和 `ui_app.spec` 引用用于打包生成桌面可执行文件 (.exe / .app)。
+
+设计细节与关键备注：
+    - 基于 CustomTkinter 框架构建，支持跨平台主题渲染与现代扁平化布局。
+    - 使用了多线程 (`threading.Thread`) 加载模型，防止启动加载 .pkl 庞大模型时界面卡死。
+    - 在执行变频泵频率计算时，自动根据工程现场的矾液配比 (原液稀释比例 1:4)、泵规格 (50Hz 额定流量 1000L/h) 以及输入的冲程比例进行动态转换。
+"""
 
 import datetime
 import threading
@@ -11,7 +33,6 @@ from predictor_service import WaterPredictor
 
 ctk.set_appearance_mode("Light")
 ctk.set_default_color_theme("blue")
-
 
 class WaterPredictorApp(ctk.CTk):
     def __init__(self):
@@ -41,6 +62,10 @@ class WaterPredictorApp(ctk.CTk):
         self.bind("<Return>", lambda _event: self._on_predict_click())
 
         self._set_system_status("正在加载预测模型...", level="warning")
+        self.update_idletasks() # 强制刷新界面
+        self.after(200, self._start_load_thread)
+
+    def _start_load_thread(self):
         threading.Thread(target=self._load_model_thread, daemon=True).start()
 
     def _build_ui(self):
@@ -63,31 +88,48 @@ class WaterPredictorApp(ctk.CTk):
 
         badge_frame = ctk.CTkFrame(header, fg_color="transparent")
         badge_frame.grid(row=0, column=1, sticky="e")
-        badge_frame.grid_columnconfigure((0, 1), weight=1)
+        badge_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        self.model_selector = ctk.CTkOptionMenu(
+            badge_frame,
+            values=["双头残差网络", "ISSA-XGBoost"],
+            command=self._on_model_select,
+            width=150,
+            height=30,
+            fg_color="#1f4e79",
+            text_color="#ffffff",
+            button_color="#133d63",
+            button_hover_color="#0d2842",
+            dropdown_fg_color="#ffffff",
+            dropdown_text_color="#1f2937",
+            dropdown_hover_color="#edf1f4",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.model_selector.grid(row=0, column=0, padx=(0, 8))
 
         self.model_badge = ctk.CTkLabel(
             badge_frame,
             textvariable=self.model_var,
-            width=190,
+            width=160,
             height=30,
             corner_radius=10,
             fg_color="#dbe7f5",
             text_color="#1f4e79",
             font=ctk.CTkFont(size=12, weight="bold"),
         )
-        self.model_badge.grid(row=0, column=0, padx=(0, 8))
+        self.model_badge.grid(row=0, column=1, padx=(0, 8))
 
         self.state_badge = ctk.CTkLabel(
             badge_frame,
             textvariable=self.status_var,
-            width=190,
+            width=140,
             height=30,
             corner_radius=10,
             fg_color="#fff1cf",
             text_color="#8a5a00",
             font=ctk.CTkFont(size=12, weight="bold"),
         )
-        self.state_badge.grid(row=0, column=1)
+        self.state_badge.grid(row=0, column=2)
 
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
@@ -304,9 +346,30 @@ class WaterPredictorApp(ctk.CTk):
     def _set_message(self, text, level="info"):
         self.message_var.set(text)
 
-    def _load_model_thread(self):
+    def _on_model_select(self, choice):
+        self.predict_btn.configure(state="disabled")
+        self._set_system_status("正在切换模型...", level="warning")
+        self.model_var.set("正在重新加载...")
+        self.model_badge.configure(fg_color="#fff1cf", text_color="#8a5a00")
+        
+        model_dir = 'models/resnet' if choice == "双头残差网络" else 'models/xgboost'
+        threading.Thread(target=self._load_model_thread, args=(model_dir,), daemon=True).start()
+
+    def _load_model_thread(self, model_dir=None):
+        import os
         try:
-            self.predictor = WaterPredictor()
+            if model_dir is None:
+                # 启动时自动选择存在的模型
+                if os.path.exists(os.path.join('models', 'resnet', 'best_model.pkl')):
+                    model_dir = 'models/resnet'
+                    self.after(0, lambda: self.model_selector.set("双头残差网络"))
+                elif os.path.exists(os.path.join('models', 'xgboost', 'best_model.pkl')):
+                    model_dir = 'models/xgboost'
+                    self.after(0, lambda: self.model_selector.set("ISSA-XGBoost"))
+                else:
+                    model_dir = 'models'
+            
+            self.predictor = WaterPredictor(model_dir=model_dir)
             self.after(0, self._on_model_loaded_success)
         except Exception as exc:
             self.after(0, lambda err=str(exc): self._on_model_loaded_fail(err))

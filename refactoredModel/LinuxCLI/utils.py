@@ -1,43 +1,35 @@
 """
-文件名称：refactoredModel/utils.py
-所属类别：重构核心生产代码 (Refactored Core Production)
+文件名称：refactoredModel/LinuxCLI/utils.py
+所属类别：Linux CLI 部署代码 (Linux CLI Release)
 
 功能描述：
-    本项目最核心的特征工程计算、数据读取流水线与神经网络模型架构定义模块。
+    专为 Linux 服务器环境打包的底层辅助工具库。
     主要职责包括：
-    1. 特征工程 (`add_engineered_features`)：根据浑浊度与氨氮的线性拟合残差等规则，将 12 维物理输入拓展为 19 维模型输入。
-    2. 数据读取与预处理 (`load_and_preprocess_data`)：加载 SQLite 中的水厂历史数据，完成清洗、切分（避免数据泄漏），拟合并导出 Imputer 和 Scaler 序列化文件。
-    3. 模型性能评估与画图 (`evaluate_and_plot`)：计算测试集上的 MAE、RMSE、R² 指标，按年份逐天绘制实际与预测折线对比图。
-    4. 神经网络架构定义：定义了残差块 (`ResidualBlock`)、深层残差网络 (`AlumDosageResNet`)、双输出头监督残差网络 (`SupervisedAlumDosageResNet`) 以及集成预测器包装类 (`ResNetRegressor`)。
+    1. 特征工程 (`add_engineered_features`)：将原始录入的浑浊度、氨氮等指标进行 7 个工艺派生维度的实时工程计算。
+    2. 数据读取与预处理 (`load_and_preprocess_data`)：加载 SQLite 中的历史训练数据并拟合导出转换器。
+    3. 神经网络结构定义：包含 `AlumDosageResNet` 等残差网络类以及 Scikit-learn 风格的多折平均回归器包装类 `ResNetRegressor`。
 
 运行与使用方法：
-    本文件通常作为底层工具包被导入使用，不在终端直接运行：
-    from utils import add_engineered_features, load_and_preprocess_data, ResNetRegressor
+    通常在 Python 脚本中被导入：
+    from utils import add_engineered_features, ResNetRegressor
 
 调用与依赖关系：
-    - 被数据构建模块 `build_database.py`、模型训练管线 `train_hybrid.py`、XGBoost训练 `xgb_issa_train.py`、评估比对 `compare_models.py` 等几乎所有重构文件调用。
-    - 依赖于 PyTorch (`torch`) 供神经网络计算，依赖 `matplotlib` 和 `seaborn` 进行制图。
+    - 被同级目录下的 `cli_app.py` 和 `predictor_service.py` 导入和调用。
+    - 相比核心生产根目录下的 `utils.py`，本部署包的 `utils.py` 对 `build_database` 和 `matplotlib` 采用了延迟导入 (Lazy Import) 设计，防止没有安装图形绘图库的服务器在启动时崩溃。
 
 设计细节与关键备注：
-    - 集成了中文字体解决画图乱码的配置。
-    - 针对预测器的高维计算包含有产水率、吨水能耗等多维工艺复合计算，逻辑完全与水厂生产数学模型对齐。
+    - 这是一个自包含镜像，移除了大量前端绘图必需的包，是保障 Linux 端低依赖独立部署运行的关键。
 """
 import os
 import sys
 import datetime
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import joblib
-from build_database import WaterDataLoader
-
-# 设定中文字体，确保绘图时不乱码
-plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Songti SC', 'SimHei', 'Arial Unicode MS']
-plt.rcParams['axes.unicode_minus'] = False
 
 # ==================== 重要：定义特征列和目标列（匹配数据库实际列名） ====================
 TARGET_COL = '耗用矾量（kg）'
@@ -158,6 +150,7 @@ def setup_logger_and_dir(model_prefix):
 
 def load_and_preprocess_data(model_dir='models'):
     """读取数据，清洗，然后划分训练测试集，正确应用插值和标准化，防止数据泄露"""
+    from build_database import WaterDataLoader
     loader = WaterDataLoader()
     try:
         df = loader.get_all_data()
@@ -246,6 +239,11 @@ def evaluate_and_plot(y_test, y_pred, y_full, y_full_pred, full_dates, model_nam
     计算指标（仅依靠测试集），并根据 full_dates 将全量预测结果按年份分组并分别绘制实际-预测图。
     这样保证图表是逐天连续的。
     """
+    import matplotlib.pyplot as plt
+    # 设定中文字体，确保绘图时不乱码
+    plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Songti SC', 'SimHei', 'Arial Unicode MS']
+    plt.rcParams['axes.unicode_minus'] = False
+
     os.makedirs(plot_dir, exist_ok=True)
 
     mae = mean_absolute_error(y_test, y_pred)
