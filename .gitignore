@@ -122,6 +122,7 @@ htmlcov/
 .coverage
 .coverage.*
 .pytest_cache/
+outputs/
 
 # Type checkers
 .mypy_cache/
