@@ -9,6 +9,7 @@
 
 ```text
 refactoredModel/
+├── README.md                 本文件
 ├── versions/                 版本归档
 │   ├── v12.2-final/          ⭐ 当前交付版本
 │   ├── 20260818-baseline/    历史快照
@@ -17,7 +18,7 @@ refactoredModel/
 └── .gitignore
 ```
 
-顶层只有这三项，不再堆放散落的脚本。
+顶层只有本文件加这三个条目，不再堆放散落的脚本。
 
 ## 版本归档
 
