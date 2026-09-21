@@ -2,6 +2,14 @@
 
 这是一个基于改进麻雀搜索算法 (ISSA) 优化 XGBoost 的智慧水务投药决策系统。
 
+## ⭐ 当前交付版本
+
+投矾量预测系统的当前版本位于 [`refactoredModel/versions/v12.2-final/`](refactoredModel/versions/v12.2-final/)，
+**日常开发与交付请直接使用该版本**。
+
+历史快照与运行说明见 [`refactoredModel/versions/README.md`](refactoredModel/versions/README.md)，
+目录指引见 [`refactoredModel/README.md`](refactoredModel/README.md)。
+
 ## 🚀 项目亮点
 - **8D 特征工程**：集成原水浊度、pH、流量、氨氮及历史记忆特征。
 - **智能调参**：利用 ISSA 算法自动寻找 XGBoost 的最佳超参数，显著提升模型泛化能力。
